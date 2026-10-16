@@ -13,7 +13,9 @@ void IIC_Init(void)
     IIC_Cfg();
 }
 
-///< IO端口配置
+/*< IO端口配置PA9为SCL PA10为SDA (KTH5702)
+							PA11为SCL PA12为SDA(ADS1115)
+*/
 static void IIC_Gpio_Cfg(void)
 {
     stc_gpio_cfg_t stcGpioCfg;
@@ -240,12 +242,12 @@ en_result_t I2C_MasterWriteThenRead(M0P_I2C_TypeDef *I2CX, uint8_t slaveaddr, co
     uint32_t u8RdIdx = 0u;
     uint8_t u8State;
 
-    if ((pu8WrData == NULL) || (u32WrLen == 0u) || (pu8RdData == NULL) || (u32RdLen == 0u))
+	if ((pu8WrData == NULL) || (u32WrLen == 0u) || (pu8RdData == NULL) || (u32RdLen == 0u)) //写入数据为空  数据长度为空 读长度为空都返回错误
     {
         return Error;
     }
 
-    I2C_SetFunc(I2CX, I2cStart_En);
+    I2C_SetFunc(I2CX, I2cStart_En);//使能iic模块
 
     while (1)
     {
@@ -257,7 +259,7 @@ en_result_t I2C_MasterWriteThenRead(M0P_I2C_TypeDef *I2CX, uint8_t slaveaddr, co
                 return Error;
             }
         }
-        u8State = I2C_GetState(I2CX);
+        u8State = I2C_GetState(I2CX);//返回状态，这个状态通过查数据手册来判断
         switch (u8State)
         {
         case 0x08: ///< 起始已发，发 SLA+W
@@ -322,3 +324,33 @@ en_result_t I2C_MasterWriteThenRead(M0P_I2C_TypeDef *I2CX, uint8_t slaveaddr, co
     enRet = Ok;
     return enRet;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

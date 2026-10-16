@@ -49,4 +49,5 @@
   ../source/page/common\SaveBox.h ../source/page/common/Box.h \
   ../source/page/common/SaveBox.h ../source/page/common/SetValueBox.h \
   ../source/app/control\buffer.h ../source/app/control/buffer.h \
-  ../source/page/common\Draw.h
+  ../source/page/common\Draw.h ../source/app/System\Save.h \
+  ../mcu/driver/inc\flash.h

@@ -56,7 +56,7 @@ char Disp_GetPixel(int iX, int iY, uint8_t iColor)
 
 inline void Disp_ClearDisplay()
 {
-    memset(disp_buffer, 0, sizeof(disp_buffer));
+    memset(disp_buffer, 0, sizeof(disp_buffer));//讲disp_buffer清空
 }
 
 inline void Disp_RefreshDisplay()

@@ -160,17 +160,18 @@ void GUIMainProcess(void)
     }
 
     /*50ms运行一次*/
-    if (get_SystemTime() > (clock + 50))
+    if (get_SystemTime() > (clock + 50))//每50ms调度一次
     {
         clock = get_SystemTime();
 
         // Check and process key press event.
-        if (KEY_GetState() != -1)
+        if (KEY_GetState() != -1)//有按键按下
         {
             KeyPressEventProc(0);
         }
 
         int port_key = Port_GetInt(DATA_I_GUI_KEY_VALUE);
+				
         if (port_key != 0)
         {
             Port_SetInt(DATA_I_GUI_KEY_VALUE, 0);
@@ -187,14 +188,14 @@ void GUIMainProcess(void)
 /** Notice:         The button is just abstract, and the message may come   **/
 /**                 from a touch screen, a serial port, and so on.          **/
 /*****************************************************************************/
-void KeyPressEventProc(uint16_t key)
+void KeyPressEventProc(uint16_t key)//抽象按键输入的来源
 {
     KEY_PRESS_EVENT stEvent;
     HMI_EVENT_INIT(stEvent);
 
-    stEvent.Head.iID = EVENT_ID_KEY_PRESS;
+    stEvent.Head.iID = EVENT_ID_KEY_PRESS;//标记这是按键事件，各页面 ProcessEvent 里靠这个 ID 分支
 
-    if (key == 0)
+    if (key == 0)//为0是来自真实物理按键
         stEvent.Data.uiKeyValue = KEY_GetValue();
     else
         stEvent.Data.uiKeyValue = key;
@@ -204,7 +205,7 @@ void KeyPressEventProc(uint16_t key)
     // stEvent.Data.uiKeyValue |= KEY_OPTION_ALT;
 
     // Post key press event.
-    HMI_ProcessEvent((HMI_EVENT_BASE *)(&stEvent));
+    HMI_ProcessEvent((HMI_EVENT_BASE *)(&stEvent));//把事件交给当前屏幕对象处理
 }
 
 /*****************************************************************************/

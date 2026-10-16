@@ -46,6 +46,8 @@ enum DataListIndex
 
     DATA_I_IP_CURRENT, // IP电流值
 
+    DATA_I_INPUT_POINT, // 输入电流 4-20mA 换算值 0~1000（对应 0.0%~100.0%）
+
     /*末尾保留最大值，用来声明数组长度*/
     DATA_MAX
 };

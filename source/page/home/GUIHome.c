@@ -4,6 +4,8 @@
 #include "Draw.h"
 #include "FontAscii_w8h16.h"
 #include "AppManage.h"
+#include "ValveControl.h"
+#include "ValveOutput.h"
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_HOME
@@ -77,7 +79,7 @@ HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstPara
     button_move_mode_up = 0;
     button_move_mode_down = 0;
     button_move_mode_speed = 1;
-//    adjust_number = get_targetValuePercent();
+    adjust_number = get_targetValuePercent();
 
     HMI_GUI_RefreshScreen(pstDeviceIF, pstParameters); /*绘制*/
     SysTickTimerEnable(true);                          /*启动定时器*/
@@ -116,10 +118,10 @@ HMI_ENGINE_RESULT HMI_GUI_RefreshScreen(SGUI_SCR_DEV *pstDeviceIF, const void *p
     Draw_buff(InValue_rect.iX,
               InValue_rect.iY,
               16, 32, gImage_image_input, 1); /*输入图标*/
-//    if (get_inpu_mode() != CONTROL_MODE_BUTTON_MOVE)
+    if (get_inpu_mode() != CONTROL_MODE_BUTTON_MOVE)
         DrawStr(pstDeviceIF, InValue_rect.iX + 48 + 2, InValue_rect.iY + 2, 1, STR_LEFT, "%%");
     DrawStr(pstDeviceIF, InValue_rect.iX + 48 + 1, 16 + InValue_rect.iY + 2, 1, STR_LEFT, "mA");
-    Disp_InValue(pstDeviceIF, true, adjust_number / 10);
+    Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT)); /*4-20mA 换算 0.0~100.0*/
 
     /*温度框*/
     Temp_rect.iX = 90;
@@ -229,28 +231,32 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
         HMI_SwitchScreen(HMI_SCREEN_ID_AUTO2, NULL);
         break;
     case KEY_VALUE_UP:
-//        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
-//        {
-//            button_move_mode_up = 5;
-//            button_move_mode_down = 0;
-//        }
-//        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
-//        {
-//            adjust_number += 10;
-//            adjust_state = 15;
-//        }
+        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
+        {
+            button_move_mode_up = 5;
+            button_move_mode_down = 0;
+        }
+        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
+        {
+            adjust_number += 10;
+            if (adjust_number > 1000)
+                adjust_number = 1000;
+            adjust_state = 15;
+        }
         break;
     case KEY_VALUE_DOWN:
-//        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
-//        {
-//            button_move_mode_down = 5;
-//            button_move_mode_up = 0;
-//        }
-//        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
-//        {
-//            adjust_number -= 10;
-//            adjust_state = 15;
-//        }
+        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
+        {
+            button_move_mode_down = 5;
+            button_move_mode_up = 0;
+        }
+        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
+        {
+            adjust_number -= 10;
+            if (adjust_number < 0)
+                adjust_number = 0;
+            adjust_state = 15;
+        }
         break;
     case KEY_VALUE_NONE:
 //        Port_SetInt(DATA_I_OUTPUT_CURRENT, get_current_data()->mid);
@@ -284,10 +290,10 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
 //            adjust_state--;
 //            if (adjust_state == 0)
 //            {
-//                set_targetValuePercent(adjust_number);
+//                set_targetValuePercent(adjust_number); /*停止按键后生效*/
 //            }
 //            flash++;
-//            Disp_InValue(pstDeviceIF, (flash % 3), adjust_number);
+//            Disp_InValue(pstDeviceIF, (flash % 3), adjust_number); /*调整中闪烁*/
 //        }
 //        else
 //        {
@@ -299,32 +305,35 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
 //    }
 //    else if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
 //    {
-//        Disp_InValue(pstDeviceIF, false, 0);
-////        if (button_move_mode_up != 0 || button_move_mode_down != 0)
-////        {
-////            if (button_move_mode_up != 0)
-////            {
-////                button_move_mode_up--;
-////                addGas(button_move_mode_speed);
-////            }
-////            if (button_move_mode_down != 0)
-////            {
-////                button_move_mode_down--;
-////                outGas(button_move_mode_speed);
-////            }
-////            button_move_mode_speed +=10;
-////        }
-////        else
-////        {
-////            button_move_mode_speed = 0;
-////            mid_current();
-////        }
+//        Disp_InValue(pstDeviceIF, false, 0); /*移动模式不显示数值*/
+//        if (button_move_mode_up != 0 || button_move_mode_down != 0)
+//        {
+//            if (button_move_mode_up != 0)
+//            {
+//                button_move_mode_up--;
+//                addGas(button_move_mode_speed); /*充气，速度渐增*/
+//            }
+//            if (button_move_mode_down != 0)
+//            {
+//                button_move_mode_down--;
+//                outGas(button_move_mode_speed); /*排气，速度渐增*/
+//            }
+//            button_move_mode_speed += 10;
+//        }
+//        else
+//        {
+//            button_move_mode_speed = 0;
+//            mid_current(); /*松键回中位*/
+//        }
 //    }
 //    else
-    {
+//    {
 //        adjust_number = get_targetValuePercent();
-        Disp_InValue(pstDeviceIF, true, adjust_number);
-    }
+//        Disp_InValue(pstDeviceIF, true, adjust_number);
+//    }
+
+    /*输入值刷新：4-20mA 换算 0.0~100.0（DataPort 由 ControlTask 周期发布）*/
+    Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT));
 
     /*IP电流*/
 //    int32_t ip_current;
@@ -341,8 +350,7 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
     Disp_Temp(pstDeviceIF, false, Port_GetFloat(DATA_F_TEMP), Port_GetFloat(DATA_F_HUMI));
 
     /*模式显示*/
-//   DrawModeIcon(pstDeviceIF, get_inpu_mode());
-		 DrawModeIcon(pstDeviceIF,1);
+    DrawModeIcon(pstDeviceIF, get_inpu_mode());
 
     return iProcessAction;
 }
@@ -407,17 +415,17 @@ static void DrawModeIcon(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT8 mode)
         }
         else
         {
-           flash = 0;
-//            if (mode == CONTROL_MODE_CURRENT_PERCENT)
+            flash = 0;
+            if (mode == CONTROL_MODE_CURRENT_PERCENT)
                 Draw_buff(9, 8, 19, 24, gImage_image_mode_auto, 0);
-//            else if (mode == CONTROL_MODE_BUTTON_PERCENT)
-//                Draw_buff(10, 8, 16, 24, gImage_image_manual, 0);
-//            else if (mode == CONTROL_MODE_RS485_PERCENT)
-//                Draw_buff(10, 8, 16, 16, gImage_image_485, 0);
-//            else if (mode == CONTROL_MODE_HART_PERCENT)
-//                Draw_buff(10, 8, 16, 16, gImage_image_485, 0);
-//            else if (mode == CONTROL_MODE_BUTTON_MOVE)
-//                Draw_buff(10, 8, 16, 24, gImage_image_mode_move, 0);
+            else if (mode == CONTROL_MODE_BUTTON_PERCENT)
+                Draw_buff(10, 8, 16, 24, gImage_image_manual, 0);
+            else if (mode == CONTROL_MODE_RS485_PERCENT)
+                Draw_buff(10, 8, 16, 16, gImage_image_485, 0);
+            else if (mode == CONTROL_MODE_HART_PERCENT)
+                Draw_buff(10, 8, 16, 16, gImage_image_485, 0);
+            else if (mode == CONTROL_MODE_BUTTON_MOVE)
+                Draw_buff(10, 8, 16, 24, gImage_image_mode_move, 0);
         }
     }
 }

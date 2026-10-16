@@ -5,6 +5,10 @@
 
 static const char *TAG = "Save";
 
+/* 输入电流默认校准参数（未校准时使用，基于实测 4mA→3.7mA / 11mA→10.6mA 反推） */
+#define INPUT_CALIB_DEFAULT_4MA     3227
+#define INPUT_CALIB_DEFAULT_20MA    15844
+
 // 系统参数缓存（RAM中保存）
 static float g_systemParams[SAVE_SYSTEM_PARAM_COUNT];
 static uint8_t g_adjustData[SAVE_ADJUST_DATA_SIZE];
@@ -59,9 +63,9 @@ static uint32_t calculate_crc32(const uint8_t *data, uint32_t len)
 /** 与 mcu/driver/src/flash.c 中 Flash_Init 的 u8FreqCfg 档位一致（按 HCLK 选档） */
 static uint8_t save_flash_hclk_to_freq_cfg(void)
 {
-    SystemCoreClockUpdate();
+    SystemCoreClockUpdate();//获取当前时钟
     uint32_t hz = SystemCoreClock;
-    if (hz <= 4000000u) {
+		if (hz <= 4000000u) {//速度不能小于4mhz
         return 1u;
     }
     if (hz <= 8000000u) {
@@ -110,7 +114,7 @@ static void save_flash_unlock_param_area(void)
     }
     if (mask1 != 0u && Flash_LockSet(FlashLock1, M0P_FLASH->SLOCK1 | mask1) != Ok) {
         DEBUG_LOGE(TAG, "FlashLock1 unlock failed");
-    }
+			}//显示debug
     if (mask2 != 0u && Flash_LockSet(FlashLock2, M0P_FLASH->SLOCK2 | mask2) != Ok) {
         DEBUG_LOGE(TAG, "FlashLock2 unlock failed");
     }
@@ -124,10 +128,10 @@ static int8_t flash_write_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
 {
     uint32_t error = 1;
     do {
-        if (Flash_Write8(addr, data, len) != Ok) {
+			if (Flash_Write8(addr, data, len) != Ok) {//重试10次以上 不成功
             error++;
             if (error > 10) {
-                RaisingExceptions(FLASH_WRITE_ERROR);
+                RaisingExceptions(FLASH_WRITE_ERROR);//错误
                 return -1;
             }
             delay1ms(1);
@@ -146,12 +150,14 @@ static int8_t flash_read_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
     return 0;
 }
 
+
+//
 // 擦除扇区（如果地址范围跨扇区需要擦除多个）
 static int8_t flash_sector_erase_range(uint32_t start_addr, uint32_t end_addr)
 {
     uint32_t sector_mask = ~(SAVE_FLASH_SECTOR_SIZE - 1);
-    uint32_t sector_start = start_addr & sector_mask;
-    uint32_t sector_end = end_addr & sector_mask;
+    uint32_t sector_start = start_addr & sector_mask;//start
+    uint32_t sector_end = end_addr & sector_mask;//end
     
     // 配置为扇区擦除模式
     if (Flash_OpModeConfig(FlashSectorEraseMode) != Ok) {
@@ -218,11 +224,11 @@ int8_t Save_Flash_Init(void)
 // 保存所有系统参数到Flash
 int8_t Save_System_Params_To_Flash(void)
 {
-    system_param_header_t header;
+    system_param_header_t header;//定义一个存储实例
     uint8_t buffer[sizeof(system_param_header_t) + sizeof(g_systemParams)];
     
-    header.validFlag = SAVE_VALID_FLAG;
-    memcpy(header.systemParams, g_systemParams, sizeof(g_systemParams));
+    header.validFlag = SAVE_VALID_FLAG;//标志
+    memcpy(header.systemParams, g_systemParams, sizeof(g_systemParams));//内存拷贝
     header.crc32 = calculate_crc32((uint8_t *)header.systemParams, sizeof(header.systemParams));
     
     memcpy(buffer, &header, sizeof(header));
@@ -271,8 +277,8 @@ int8_t Load_System_Params_From_Flash(void)
 // 保存单个系统参数（同时更新RAM和Flash）
 void Save_System(enum Save_System index, float32_t dat)
 {
-    if (index >= SAVE_SYSTEM_PARAM_COUNT) {
-        DEBUG_LOGE(TAG, "Invalid system param index: %d", index);
+    if (index >= SAVE_SYSTEM_PARAM_COUNT) { //如果超出了范围
+        DEBUG_LOGE(TAG, "Invalid system param index: %d", index);//debug报错
         return;
     }
     
@@ -299,6 +305,25 @@ float32_t Read_System(enum Save_System index)
     
     DEBUG_LOGD(TAG, "Read System index:%d data:%.2f", index, g_systemParams[index]);
     return g_systemParams[index];
+}
+
+/* 读取控制模式（非法值回落电流模式） */
+int get_inpu_mode(void)
+{
+    int mode = (int)Read_System(SAVE_CONTROL_MODE);
+    if (mode < 0 || mode >= CONTROL_MODE_END) {
+        mode = CONTROL_MODE_CURRENT_PERCENT;
+    }
+    return mode;
+}
+
+/* 保存控制模式 */
+void save_inpu_mode(int mode)
+{
+    if (mode < 0 || mode >= CONTROL_MODE_END) {
+        mode = CONTROL_MODE_CURRENT_PERCENT;
+    }
+    Save_System(SAVE_CONTROL_MODE, (float32_t)mode);
 }
 
 // 保存块数据（校准参数等）
@@ -377,42 +402,139 @@ void Save_System_Init(void)
     lcd_set_contrast_ratio(Read_System(SAVE_CONTRAST_RATIO));
 
     /*读取控制模式*/
-//    control_mode_t input_mode;
-//    input_mode = (int32_t)Read_System(SAVE_CONTROL_MODE);
-//    DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
-//    if (input_mode < 0 || input_mode >= CONTROL_MODE_END)
-//        input_mode = CONTROL_MODE_CURRENT_PERCENT;
-//    set_input_confit_mode(input_mode);
-//    DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
+    // control_mode_t input_mode;
+    // input_mode = (int32_t)Read_System(SAVE_CONTROL_MODE);
+    // DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
+    // if (input_mode < 0 || input_mode >= CONTROL_MODE_END)
+    //     input_mode = CONTROL_MODE_CURRENT_PERCENT;
+    // set_input_confit_mode(input_mode);
+    // DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
 
-//    /*读取误差范围*/
-//    getControlProgram()->system.errorRange = Read_System(SAVE_ERROR_RANGE);
-//    if (getControlProgram()->system.errorRange < 0.3)
-//        getControlProgram()->system.errorRange = 0.3;
-//    else if (getControlProgram()->system.errorRange > 10)
-//        getControlProgram()->system.errorRange = 10;
-//    DEBUG_LOGI(TAG, "误差范围:%0.1f%%", getControlProgram()->system.errorRange);
+    // /*读取误差范围*/
+    // getControlProgram()->system.errorRange = Read_System(SAVE_ERROR_RANGE);
+    // if (getControlProgram()->system.errorRange < 0.3)
+    //     getControlProgram()->system.errorRange = 0.3;
+    // else if (getControlProgram()->system.errorRange > 10)
+    //     getControlProgram()->system.errorRange = 10;
+    // DEBUG_LOGI(TAG, "误差范围:%0.1f%%", getControlProgram()->system.errorRange);
 
 
 
 
 //    /*读取输入电流校准数据*/
-//    input_calibration_t input_current;
-//    Read_System_block(SAVE_INPUT_CURRENT, &input_current, sizeof(input_calibration_t));
-//    if (input_current.calibration_max <= input_current.calibration_min)
-//        input_current.state = false;
-//    if (input_current.state == false)
-//    {
-//        input_current.calibration_max = 15877;
-//        input_current.calibration_min = 3110;
-//    }
-//    set_input_calibration(&input_current);
-//    DEBUG_LOGI(TAG, "输入:%s", input_current.state == true ? "已校准" : "未校准");
-//    DEBUG_LOGI(TAG, "输入电流最小值:%d", input_current.calibration_min);
-//    DEBUG_LOGI(TAG, "输入电流最大值:%d", input_current.calibration_max);
-//    if (input_current.state == false)
-//    {
-//        input_current.calibration_max = 15877;
-//        input_current.calibration_min = 3110;
-//    }
+    input_calibration_t input_current;
+    if (0 == Read_System_block(SAVE_INPUT_CURRENT, &input_current, sizeof(input_calibration_t)))
+    {
+        if (input_current.validFlag == INPUT_CALIB_VALID_FLAG &&
+            input_current.calibrated == 1 &&
+            input_current.raw_20ma > input_current.raw_4ma)
+        {
+            set_input_calibration(&input_current);
+            DEBUG_LOGI(TAG, "input current calibrated: 4mA=%ld, 20mA=%ld",
+                       (long)input_current.raw_4ma, (long)input_current.raw_20ma);
+        }
+        else
+        {
+            /* 未校准：使用默认参数 */
+            input_calibration_t def;
+            def.validFlag  = INPUT_CALIB_VALID_FLAG;
+            def.raw_4ma    = INPUT_CALIB_DEFAULT_4MA;
+            def.raw_20ma   = INPUT_CALIB_DEFAULT_20MA;
+            def.calibrated = 0;
+            set_input_calibration(&def);
+            DEBUG_LOGI(TAG, "input current not calibrated, use default");
+        }
+    }
 }
+
+//读取参数上层应用  在这里保存应用参数
+void Read_SegA (void){
+	
+	
+	
+	
+}
+
+/* ===================== 输入电流校准 ===================== */
+
+static input_calibration_t g_inputCalib;  /* RAM 缓存 */
+
+void set_input_calibration(const input_calibration_t *cal)
+{
+    if (cal != NULL)
+    {
+        g_inputCalib = *cal;
+    }
+}
+
+void get_input_calibration(input_calibration_t *cal)
+{
+    if (cal != NULL)
+    {
+        *cal = g_inputCalib;
+    }
+}
+
+void save_input_calibration(int32_t raw_4ma, int32_t raw_20ma)
+{
+    input_calibration_t cal;
+
+    cal.validFlag   = INPUT_CALIB_VALID_FLAG;
+    cal.raw_4ma     = raw_4ma;
+    cal.raw_20ma    = raw_20ma;
+    cal.calibrated  = 1;
+    cal.reserved[0] = 0;
+    cal.reserved[1] = 0;
+    cal.reserved[2] = 0;
+
+    set_input_calibration(&cal);
+
+    if (Save_System_block(SAVE_INPUT_CURRENT, &cal, sizeof(cal)) != 0)
+    {
+        DEBUG_LOGE(TAG, "save input calibration failed");
+        return;
+    }
+    DEBUG_LOGI(TAG, "input calib saved: 4mA=%ld, 20mA=%ld",
+               (long)raw_4ma, (long)raw_20ma);
+}
+
+/* raw AD 值 → 电流(mA)，使用两点线性校准 */
+int32_t input_current_raw_to_ma(int32_t raw)
+{
+    int32_t r4 = g_inputCalib.raw_4ma;
+    int32_t r20 = g_inputCalib.raw_20ma;
+    int32_t denom = r20 - r4;
+
+    if (g_inputCalib.calibrated == 0 || denom == 0)
+    {
+        /* 未校准：用默认值 */
+        r4 = INPUT_CALIB_DEFAULT_4MA;
+        r20 = INPUT_CALIB_DEFAULT_20MA;
+        denom = r20 - r4;
+        if (denom == 0) return 0;
+    }
+
+    /* 线性插值: mA = 4 + (raw - r4) * (20 - 4) / (r20 - r4)
+     * 用定点数避免浮点，结果保留两位小数(×100) */
+    int64_t ma_x100 = 400 + (int64_t)(raw - r4) * 1600 / denom;
+    return (int32_t)(ma_x100 / 100);  /* 返回 mA 整数部分 */
+}
+
+/* 浮点版本，供需要小数的显示使用 */
+float input_current_raw_to_ma_float(int32_t raw)
+{
+    int32_t r4 = g_inputCalib.raw_4ma;
+    int32_t r20 = g_inputCalib.raw_20ma;
+    int32_t denom = r20 - r4;
+
+    if (g_inputCalib.calibrated == 0 || denom == 0)
+    {
+        r4 = INPUT_CALIB_DEFAULT_4MA;
+        r20 = INPUT_CALIB_DEFAULT_20MA;
+        denom = r20 - r4;
+        if (denom == 0) return 0.0f;
+    }
+
+    return 4.0f + (float)(raw - r4) * 16.0f / (float)denom;
+}
+

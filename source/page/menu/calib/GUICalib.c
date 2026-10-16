@@ -7,6 +7,7 @@
 #include "SaveBox.h"
 #include "buffer.h"
 #include "Draw.h"
+#include "Save.h"
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_GUI_CURRENT_CALIB
@@ -108,7 +109,7 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
     case BOX_RETURN:
         return HMI_RET_NORMAL;
     case BOX_YES:
-//        save_input_calibration(current_min, current_max);
+        save_input_calibration(current_min, current_max);
         if (get_setValue_Box_State() == true)
             Close_setValveBox(true);
         if (NULL != piActionID)
@@ -196,7 +197,7 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
         Buffer_Init(&input, input_current_buffer, sizeof(input_current_buffer) / sizeof(input_current_buffer[0]));
         enable_step = true;
         step_disp(pstDeviceIF, 1);
-        input_current = ADX111_Read(0);
+        input_current = ADX111_GetLastResult();
         Buffer_Push(&input, input_current);
         DrawStr(pstDeviceIF, 96, 40, 0, STR_MEDIATE, "%s:%dmA", tr("Adjust current to"), 4);
         Draw_buff_Byte(46, 56, 100, 16, 0x00);
@@ -205,14 +206,16 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
     case 1: /*检察最小电流*/
         enable_step = false;
         pstProcessBarData.Data.Value += 5;
-        input_current = ADX111_Read(0);
+        input_current = ADX111_GetLastResult();
         Buffer_Push(&input, input_current);
         SGUI_ProcessBar_Repaint(pstDeviceIF, &pstProcessBarData);
+        DEBUG_LOGI(TAG, "step1: bar=%d, buf_len=%d", pstProcessBarData.Data.Value, Buffer_Length(&input));
         if (pstProcessBarData.Data.Value >= 100)
         {
             if (Buffer_Length(&input) >= 20)
             {
                 current_min = get_average(&input, 20);
+                DEBUG_LOGI(TAG, "step1 done: current_min=%d", current_min);
                 pstProcessBarData.Data.Value = 0;
                 SGUI_ProcessBar_Repaint(pstDeviceIF, &pstProcessBarData);
                 step++;
@@ -221,7 +224,7 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
         break;
     case 2: /*输入最大电流*/
         step_disp(pstDeviceIF, 2);
-        input_current = ADX111_Read(0);
+        input_current = ADX111_GetLastResult();
         Buffer_Clear(&input);
         Buffer_Push(&input, input_current);
 
@@ -240,7 +243,7 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
     case 3: /*检查最小电流和最大电流*/
         enable_step = false;
         pstProcessBarData.Data.Value += 5;
-        input_current = ADX111_Read(0);
+        input_current = ADX111_GetLastResult();
         Buffer_Push(&input, input_current);
         SGUI_ProcessBar_Repaint(pstDeviceIF, &pstProcessBarData);
         if (pstProcessBarData.Data.Value >= 100)
@@ -297,6 +300,8 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
 static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 uiKeyValue)
 {
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
+    DEBUG_LOGI(TAG, "GUI_Key_Event: key=0x%04X, step=%d, enable_step=%d",
+               uiKeyValue, step, enable_step);
     switch (uiKeyValue)
     {
     case KEY_VALUE_ENTER:
@@ -304,10 +309,12 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
         {
             enable_step = false;
             step++;
+            DEBUG_LOGI(TAG, "ENTER: step->%d", step);
         }
         else
         {
             key_press = 9;
+            DEBUG_LOGI(TAG, "ENTER ignored (enable_step=false)");
         }
         break;
     case KEY_VALUE_ESC:

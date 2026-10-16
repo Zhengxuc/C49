@@ -161,11 +161,11 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
     switch (uiKeyValue)
     {
-    case KEY_VALUE_ENTER:
+    case KEY_VALUE_ENTER://
         // HMI_SwitchScreen(HMI_SCREEN_ID_MENU_ALL, NULL);
         HMI_SwitchScreen(HMI_SCREEN_ID_GUI_COUNT_DOWN, &aaa);
         break;
-    case KEY_VALUE_ESC:
+    case KEY_VALUE_ESC://返回主界面
         appManage_switchTask(APP_TASK_AUTO_CONTROL);
 
         GUI_OBJECT.pstPrevious = NULL;

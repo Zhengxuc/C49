@@ -41,24 +41,26 @@ void KEY_Init(void)
     Gpio_Init(KEY_FN_PIN, &stcGpioCfg);
 }
 
+//默认下拉接地，按下上拉高电平
 int KEY_GetState()
 {
     static bool record = false;
     static int timeout = 0;
     static int lock = 0;
-    if (lock == 0)
+    if (lock == 0)//空闲状态下
     {
-        if (Gpio_GetInputIO(KEY_FN_PIN) == 1)
+        if (Gpio_GetInputIO(KEY_FN_PIN) == 1)//按键按下
         {
-            lock = 1;
+            lock = 1;//非空闲状态
             record = true;
-            key_value = KEY_VALUE_ESC;
+            key_value = KEY_VALUE_ESC;//标记当下key状态
             return KEY_VALUE_ESC;
         }
         else if (Gpio_GetInputIO(KEY_UP_PIN) == 1)
         {
             lock = 1;
             record = true;
+					
             key_value = KEY_VALUE_UP;
             return KEY_VALUE_UP;
         }
@@ -91,9 +93,9 @@ int KEY_GetState()
         else
         {
             timeout++;
-            if (timeout >= 20)
+            if (timeout >= 4)
             {
-                timeout = 20;
+                timeout = 4;//延时消抖+长按连发（4×50ms 扫描 ≈ 400ms 重复一次）
                 if (Gpio_GetInputIO(KEY_FN_PIN) == 1)
                 {
                     record = true;
@@ -125,13 +127,13 @@ int KEY_GetState()
             }
         }
     }
-    if (record == true)
+    if (record == true)//按键标志位确定
     {
         record = false;
-        key_value = KEY_VALUE_NONE;
+        key_value = KEY_VALUE_NONE;//案件标志
         return KEY_VALUE_NONE;
     }
-    return -1;
+    return -1;//空 没有按键按下
 }
 
 int KEY_GetValue()

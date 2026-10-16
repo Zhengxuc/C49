@@ -153,11 +153,11 @@ void App_UartPortInit(void)
 //  fun:功能字. 0XA0~0XAF
 //  data:数据缓存区,最多28字节!!
 //  len:data区有效数据个数
-void UserUart1_send_report(unsigned char fun, unsigned char *data, unsigned char len)
+void UserUart1_send_report(unsigned char fun, unsigned char *data, unsigned char len)//暂未使用
 {
     unsigned char send_buf[32];
     unsigned char i;
-    if (len > 27)
+    if (len > 27)//长度超限
         return;            // 最多28字节数据
     send_buf[len + 4] = 0; // 校验数置零
     send_buf[0] = 0XAA;    // 帧头
@@ -169,7 +169,7 @@ void UserUart1_send_report(unsigned char fun, unsigned char *data, unsigned char
     for (i = 0; i < len + 4; i++)
         send_buf[len + 4] += send_buf[i]; // 计算校验和
 
-    UserUart1_send_data((char *)send_buf, len + 5);
+    UserUart1_send_data((char *)send_buf, len + 5);//将数据发送出去
 }
 
 void UserUart1_send_reportV2(unsigned char fun, unsigned char *data, unsigned char len)

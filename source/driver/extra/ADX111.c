@@ -84,26 +84,43 @@ static ErrorCode adx111_read_register(uint8_t reg_addr, uint16_t *value)
 ErrorCode ADX111_Init(void)
 {
     uint16_t device_id;
-    
+    uint16_t readback;
+
     // 尝试读取配置寄存器，验证通信是否正常
     if (NONE_ERROR != adx111_read_register(ADX111_REG_CONFIG, &device_id))
     {
-        DEBUG_LOGE(TAG, "ADX111 communication failed");
+        DEBUG_LOGE(TAG, "ADX111 communication failed (read config)");
         return ADC_SENSOR_BUS_ERROR;
     }
-    
-    // 设置默认配置 (连续模式，AIN0-AIN1差分，PGA=±2.048V，DR=128SPS)
-    // 配置寄存器位: OS=0, MUX=000, PGA=010, MODE=0, DR=100, COMP_QUE=11
-    // 0x8583 = 1000 0101 1000 0011
-    g_config_reg = 0x8583;  // 默认值
-    
+    DEBUG_LOGI(TAG, "ADX111 config readback (power-on): 0x%04X", device_id);
+
+    // 设置默认配置: 连续模式, AIN0-AIN1差分, PGA=±2.048V, DR=128SPS
+    // Bit15 OS=1, Bit14-12 MUX=000, Bit11-9 PGA=010, Bit8 MODE=0(连续),
+    // Bit7-5 DR=100, Bit4-2 COMP=000, Bit1-0 COMP_QUE=11
+    // 0x8483 = 1000 0100 1000 0011
+    g_config_reg = 0x8483;
+
     // 写入配置寄存器
     if (NONE_ERROR != adx111_write_register(ADX111_REG_CONFIG, g_config_reg))
     {
+        DEBUG_LOGE(TAG, "ADX111 write config failed");
         return ADC_SENSOR_BUS_ERROR;
     }
-    
-    DEBUG_LOGI(TAG, "ADX111 initialized successfully");
+
+    // 读回确认写入成功
+    if (NONE_ERROR != adx111_read_register(ADX111_REG_CONFIG, &readback))
+    {
+        DEBUG_LOGE(TAG, "ADX111 readback config failed");
+        return ADC_SENSOR_BUS_ERROR;
+    }
+    // 连续模式下 OS 位读取恒为 1，因此屏蔽 OS 位后比较
+    if ((readback & 0x7FFF) != (g_config_reg & 0x7FFF))
+    {
+        DEBUG_LOGE(TAG, "ADX111 config mismatch: wrote 0x%04X, read 0x%04X", g_config_reg, readback);
+        return ADC_SENSOR_BUS_ERROR;
+    }
+
+    DEBUG_LOGI(TAG, "ADX111 init OK, config=0x%04X (continuous mode)", g_config_reg);
     return NONE_ERROR;
 }
 
@@ -218,11 +235,18 @@ int16_t ADX111_ReadDiff(void)
 int16_t ADX111_GetLastResult(void)
 {
     uint16_t result;
-    
+    static uint32_t fail_cnt = 0;
+
     if (NONE_ERROR != adx111_read_register(ADX111_REG_CONVERSION, &result))
     {
+        fail_cnt++;
+        // 限流：每 100 次失败打一次日志，避免刷屏
+        if ((fail_cnt % 100) == 0)
+        {
+            DEBUG_LOGE(TAG, "ADX111 read conversion failed, cnt=%lu", (unsigned long)fail_cnt);
+        }
         return 0;
     }
-    
+
     return (int16_t)result;
 }

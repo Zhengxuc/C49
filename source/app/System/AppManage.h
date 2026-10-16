@@ -12,10 +12,10 @@
 
 enum AppTask
 {
-    APP_TASK_NONE = 0,
-    APP_TASK_AUTO_ADJ,
-    APP_TASK_AUTO_CONTROL,
-    APP_TASK_PRESSURE,
+    APP_TASK_NONE = 0,//没有任务
+    APP_TASK_AUTO_ADJ,//自动整定
+    APP_TASK_AUTO_CONTROL,//自动控制
+    APP_TASK_PRESSURE,//压力？
 };
 
 void appManage_only(void (*void_dat)(void));

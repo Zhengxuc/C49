@@ -59,7 +59,7 @@ typedef struct
 HMI_EVENT_TYPE_DECLARE(KEY_PRESS_EVENT, KEY_EVENT_DATA)
 HMI_EVENT_TYPE_DECLARE(DATA_EVENT, DUMMY_DATA_EVENT_DATA);
 
-#define HEART_BEAT_INTERVAL_MS (200)
+#define HEART_BEAT_INTERVAL_MS (50)
 #define INS_SOURCE(a) extern const unsigned char a[]
 
 /* HMI engine object. */

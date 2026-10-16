@@ -44,4 +44,7 @@
   ../source/page/language\language.h ../source/page/main\page.h \
   ../source/page/font\FontBigNumber.h ../source/app/System\Save.h \
   ../mcu/driver/inc\flash.h ../source/page/common\Draw.h \
-  ../source/page/font\FontAscii_w8h16.h ../source/app/System\AppManage.h
+  ../source/page/font\FontAscii_w8h16.h ../source/app/System\AppManage.h \
+  ../source/app/AutoControl\ValveControl.h \
+  ../source/app/AutoControl/ValveParam.h \
+  ../source/app/AutoControl\ValveOutput.h

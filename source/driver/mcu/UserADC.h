@@ -4,5 +4,7 @@
 
 #include "common.h"
 
-#endif
+void UserAdcInit(void);
+uint32_t UserAdcGetValue(void);
 
+#endif

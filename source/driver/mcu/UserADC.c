@@ -26,16 +26,17 @@ void UserAdcInit(void)
     User_AdcInit();
     ///< ADC 单次采样模式 配置
     User_AdcSglCfg();
+}
 
-    while (1)
+///< 读取当前ADC采样值（非阻塞）
+uint32_t UserAdcGetValue(void)
+{
+    if (TRUE == Adc_GetIrqStatus(AdcMskIrqSgl))
     {
-        if (TRUE == Adc_GetIrqStatus(AdcMskIrqSgl))
-        {
-            ///< 获取采样值
-            u32AdcRestult = Adc_GetSglResult();
-            Adc_ClrIrqStatus(AdcMskIrqSgl);
-        }
+        u32AdcRestult = Adc_GetSglResult();
+        Adc_ClrIrqStatus(AdcMskIrqSgl);
     }
+    return u32AdcRestult;
 }
 
 ///< ADC 采样端口初始化

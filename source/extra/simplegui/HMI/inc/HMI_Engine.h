@@ -63,7 +63,7 @@ typedef struct
 {
     SGUI_INT            iID;
     SGUI_INT            iSize;
-}HMI_EVENT_BASE;
+}HMI_EVENT_BASE;//页面结构体成员
 
 typedef struct
 {

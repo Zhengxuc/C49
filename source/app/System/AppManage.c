@@ -5,7 +5,7 @@
 static int task = 0;
 static bool GUI_Collision = true;
 
-void appManage_only(void (*void_dat)(void))
+void appManage_only(void (*void_dat)(void)) //º¯ÊýÖ¸Õë
 {
     if (GUI_Collision)
     {

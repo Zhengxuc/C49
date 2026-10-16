@@ -19,6 +19,8 @@ static uint32_t clock_10s = 0;
 
 void SystemServer_Init(void)
 {
+	
+	
 }
 
 void SystemServer(void)
@@ -46,6 +48,7 @@ void SystemServer(void)
 
     if ((get_delay(&clock_10s, 10000)))
     {
+			//在这里做温湿度的逻辑
         // AHT20_GetTemperature();
     }
 }

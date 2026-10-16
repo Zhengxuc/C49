@@ -622,6 +622,36 @@
               <FileType>1</FileType>
               <FilePath>..\source\app\System\SystemServer.c</FilePath>
             </File>
+            <File>
+              <FileName>Flash_RW.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\System\Flash_RW.c</FilePath>
+            </File>
+            <File>
+              <FileName>ValveParam.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoControl\ValveParam.c</FilePath>
+            </File>
+            <File>
+              <FileName>ValvePID.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoControl\ValvePID.c</FilePath>
+            </File>
+            <File>
+              <FileName>ValveOutput.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoControl\ValveOutput.c</FilePath>
+            </File>
+            <File>
+              <FileName>ValveControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoControl\ValveControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>TestDrive.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoControl\TestDrive.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

@@ -37,7 +37,7 @@ void system_HAL_Init(void)
     UserTime4Init();
     UserTime6Init();
     UserDacInit();
-    IIC_Init();
+    IIC_Init();//两路iic初始化
     KEY_Init();
     DEBUG_LOGI("MAIN", "Init ok");
     DEBUG_LOGI("MAIN", "System Click:%dMhz", SystemCoreClock / 1000000);
