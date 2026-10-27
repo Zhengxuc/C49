@@ -71,9 +71,9 @@ static SGUI_ITEMS_ITEM control_curve_itme[] = {
 static SGUI_ITEMS_ITEM control_mode_item[] = {
     {"Current Ratio", NULL}, // 4-20MA电流控制
     {"Button Ratio", NULL},  // 按键比列控制
+    {"Button Move", NULL},   // 按键手动控制
     {"RS485", NULL},         // 485控制
     {"HART", NULL},          // HART控制
-    {"Button Move", NULL},   // 按键移动控制
 };
 
 /*参数初始化*/
@@ -87,7 +87,7 @@ HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstPara
 {
     pstDeviceIF->fnClear(); /*清屏*/
 
-    control_mode = (int32_t)Read_System(SAVE_CONTROL_MODE);
+    control_mode = (float)Read_System(SAVE_CONTROL_MODE);
 
     /*语言翻译*/
     int list_count = sizeof(ListItems) / sizeof(SGUI_ITEMS_ITEM);
@@ -161,7 +161,7 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
         {
 //            set_input_confit_mode(control_mode);
             DEBUG_LOGI(TAG, "保存控制模式:%d", (int32_t)control_mode);
-            Save_System(SAVE_CONTROL_MODE, control_mode);
+            Save_System(SAVE_CONTROL_MODE, (int32_t)control_mode);
         }
         SGUI_List_Repaint(pstDeviceIF, ActivedObject);
         if (get_setValue_Box_State() == true)

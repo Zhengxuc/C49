@@ -5,7 +5,8 @@
 #include "FontAscii_w8h16.h"
 #include "AppManage.h"
 #include "ValveControl.h"
-#include "ValveOutput.h"
+#include "Setpoint.h"       /* get_targetValuePercent 等手动设定接口 */
+#include "key.h"            /* KEY_UP_PIN/KEY_DOWN_PIN：纯手动模式电平直读 */
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_HOME
@@ -46,9 +47,6 @@ static int adjust_state = 0;       // 指示目标是否生效
 static SGUI_RECT InValue_rect;     // 输入值框
 static SGUI_RECT Temp_rect;        // 温度框
 static SGUI_RECT sensor_rect;      // 传感器
-static int button_move_mode_up;    // 按键移动模式 上
-static int button_move_mode_down;  // 按键移动模式 下
-static int button_move_mode_speed; // 按键移动模式 速度
 
 static void HMI_DemoPolarCoord_PaintClock(SGUI_SCR_DEV *pstDeviceIF, bool DrawBase, int scale);
 static void DrawScaleMark(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT8 x, SGUI_UINT8 y, SGUI_SZSTR srt);
@@ -76,10 +74,8 @@ HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstPara
 {
     pstDeviceIF->fnClear(); /*清屏*/
     adjust_state = 0;
-    button_move_mode_up = 0;
-    button_move_mode_down = 0;
-    button_move_mode_speed = 1;
     adjust_number = get_targetValuePercent();
+    Port_SetInt(DATA_I_MANUAL_CMD, 0);   /* 进页面先停气，避免上次手动残留指令 */
 
     HMI_GUI_RefreshScreen(pstDeviceIF, pstParameters); /*绘制*/
     SysTickTimerEnable(true);                          /*启动定时器*/
@@ -118,8 +114,7 @@ HMI_ENGINE_RESULT HMI_GUI_RefreshScreen(SGUI_SCR_DEV *pstDeviceIF, const void *p
     Draw_buff(InValue_rect.iX,
               InValue_rect.iY,
               16, 32, gImage_image_input, 1); /*输入图标*/
-    if (get_inpu_mode() != CONTROL_MODE_BUTTON_MOVE)
-        DrawStr(pstDeviceIF, InValue_rect.iX + 48 + 2, InValue_rect.iY + 2, 1, STR_LEFT, "%%");
+    DrawStr(pstDeviceIF, InValue_rect.iX + 48 + 2, InValue_rect.iY + 2, 1, STR_LEFT, "%%");
     DrawStr(pstDeviceIF, InValue_rect.iX + 48 + 1, 16 + InValue_rect.iY + 2, 1, STR_LEFT, "mA");
     Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT)); /*4-20mA 换算 0.0~100.0*/
 
@@ -139,7 +134,7 @@ HMI_ENGINE_RESULT HMI_GUI_RefreshScreen(SGUI_SCR_DEV *pstDeviceIF, const void *p
     Draw_buff(Temp_rect.iX + 4 + 32, Temp_rect.iY, 8, 16, FontAscii_w8h16[95], 1);     /*℃*/
     Draw_buff(Temp_rect.iX + 4 + 32, Temp_rect.iY + 16, 8, 16, FontAscii_w8h16[5], 1); /*%*/
 
-    /*震动和噪声*/
+    /*震动和噪声,目前只画了框，并没有填入数据*/
     sensor_rect.iX = 144;
     sensor_rect.iY = pstDeviceIF->stSize.iHeight - 36;
     sensor_rect.iWidth = 48;
@@ -231,28 +226,18 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
         HMI_SwitchScreen(HMI_SCREEN_ID_AUTO2, NULL);
         break;
     case KEY_VALUE_UP:
-        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
+        if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
         {
-            button_move_mode_up = 5;
-            button_move_mode_down = 0;
-        }
-        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
-        {
-            adjust_number += 10;
+            adjust_number += 1;  /* 每拍 ±0.1%（0~1000 刻度），长按连发快速调节 */
             if (adjust_number > 1000)
                 adjust_number = 1000;
             adjust_state = 15;
         }
         break;
     case KEY_VALUE_DOWN:
-        if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
+        if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
         {
-            button_move_mode_down = 5;
-            button_move_mode_up = 0;
-        }
-        else if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
-        {
-            adjust_number -= 10;
+            adjust_number -= 1;  /* 每拍 ±0.1% */
             if (adjust_number < 0)
                 adjust_number = 0;
             adjust_state = 15;
@@ -275,65 +260,67 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
     static int flash = 0;
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
 
-    float32_t angle = Port_GetFloat(DATA_F_ANGLE);
+    float32_t angle = Port_GetFloat(DATA_F_ANGLE);//从port获取角度
 
-    /*范围限制*/
+    /*范围限制*/ 
     angle = scope(angle, -1000, 9999);
     HMI_DemoPolarCoord_PaintClock(pstDeviceIF, false, angle);
+    /*显示角度*/
     DrawBigNumber(pstDeviceIF, angle);
 
     /*输入目标比列*/
-//    if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
-//    {
-//        if (adjust_state > 0)
-//        {
-//            adjust_state--;
-//            if (adjust_state == 0)
-//            {
-//                set_targetValuePercent(adjust_number); /*停止按键后生效*/
-//            }
-//            flash++;
-//            Disp_InValue(pstDeviceIF, (flash % 3), adjust_number); /*调整中闪烁*/
-//        }
-//        else
-//        {
-//            flash = 0;
-//            Disp_InValue(pstDeviceIF, true, adjust_number);
-//            if (adjust_number != get_targetValuePercent())
-//                adjust_number = get_targetValuePercent();
-//        }
-//    }
-//    else if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
-//    {
-//        Disp_InValue(pstDeviceIF, false, 0); /*移动模式不显示数值*/
-//        if (button_move_mode_up != 0 || button_move_mode_down != 0)
-//        {
-//            if (button_move_mode_up != 0)
-//            {
-//                button_move_mode_up--;
-//                addGas(button_move_mode_speed); /*充气，速度渐增*/
-//            }
-//            if (button_move_mode_down != 0)
-//            {
-//                button_move_mode_down--;
-//                outGas(button_move_mode_speed); /*排气，速度渐增*/
-//            }
-//            button_move_mode_speed += 10;
-//        }
-//        else
-//        {
-//            button_move_mode_speed = 0;
-//            mid_current(); /*松键回中位*/
-//        }
-//    }
-//    else
-//    {
-//        adjust_number = get_targetValuePercent();
-//        Disp_InValue(pstDeviceIF, true, adjust_number);
-//    }
+    if (get_inpu_mode() == CONTROL_MODE_BUTTON_PERCENT)
+    {
+        if (adjust_state > 0)
+        {
+            adjust_state--;
+            if (adjust_state == 0)
+            {
+                set_targetValuePercent(adjust_number); /*停止按键后生效*/
+            }
+            flash++;
+            Disp_InValue(pstDeviceIF, (flash % 3), adjust_number); /*调整中闪烁*/
+        }
+        else
+        {
+            flash = 0;
+            Disp_InValue(pstDeviceIF, true, adjust_number);
+            if (adjust_number != get_targetValuePercent())
+                adjust_number = get_targetValuePercent();
+        }
+    }
+    else if (get_inpu_mode() == CONTROL_MODE_BUTTON_MOVE)
+    {
+        /* 纯手动（按住才动）：定时事件（50ms）直接采样按键电平，两拍确认消抖——
+         * 电平指令连续两拍一致才写端口：抖动期电平 0/1 弹跳永远不满足"连续一致"，
+         * 指令保持不动（滤抖）；稳定按住/松开后 ≤100ms 内生效。
+         * 实际驱动由 ValveControl 在控制任务内执行，本层只发指令 */
+        static int s_raw_last = 0;   /* 上一拍采到的电平指令 */
+        int raw = 0;
 
-    /*输入值刷新：4-20mA 换算 0.0~100.0（DataPort 由 ControlTask 周期发布）*/
-    Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT));
+        /* 输入框仍显示 4-20mA 换算百分比（setpoint 跟随电流，供监控） */
+        Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT));
+
+        if (Gpio_GetInputIO(KEY_UP_PIN) == 1)
+        {
+            raw = 1;    /* 按住上行：满幅充气 */
+        }
+        else if (Gpio_GetInputIO(KEY_DOWN_PIN) == 1)
+        {
+            raw = -1;   /* 按住下行：满幅排气 */
+        }
+
+        if (raw == s_raw_last)
+        {
+            Port_SetInt(DATA_I_MANUAL_CMD, raw);   /* 连续两拍一致才切换/保持指令 */
+        }
+        s_raw_last = raw;
+    }
+    else
+    {
+        /* 电流/485/HART：输入框显示 4-20mA 换算值（ControlTask 周期发布） */
+        Disp_InValue(pstDeviceIF, true, Port_GetInt(DATA_I_INPUT_POINT));
+    }
 
     /*IP电流*/
 //    int32_t ip_current;

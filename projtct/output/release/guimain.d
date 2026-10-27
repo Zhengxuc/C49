@@ -15,13 +15,8 @@
   ../source/page/main/GUIActions.h \
   ../source/extra/simplegui/GUI/inc\SGUI_Basic.h \
   ../source/driver/extra\Disp.h ../source/driver/extra\key.h \
-  ../source/driver/mcu\UserTim4.h ../source/common\common.h \
-  ../source/common/debugLOG.h \
-  D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\stdarg.h \
-  ../source/extra/SEGGER_RTT_V760c/RTT\SEGGER_RTT.h \
-  ../source/extra/SEGGER_RTT_V760c/RTT/../Config/SEGGER_RTT_Conf.h \
-  ../source/driver/mcu\UserUart1.h ../source/common/error.h \
-  ../mcu/driver/inc\ddl.h ../mcu/common\base_types.h \
+  ../mcu/driver/inc\gpio.h ../mcu/driver/inc/ddl.h \
+  ../mcu/common\base_types.h \
   D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\assert.h \
   ../mcu/common\board_stkhc32l19x.h ../mcu/common\hc32l19x.h \
   D:/Software/KEIL526PACK/ARM/CMSIS/5.4.0/CMSIS/Core/Include\core_cm0plus.h \
@@ -31,10 +26,15 @@
   D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\arm_compat.h \
   D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\arm_acle.h \
   ../mcu/common\system_hc32l19x.h ../mcu/driver/inc/sysctrl.h \
-  ../mcu/driver/inc/ddl.h ../mcu/common\interrupts_hc32l19x.h \
-  ../source/common\ddl_device.h ../source/driver/mcu\UserTim6.h \
-  ../mcu/driver/inc\adt.h ../source/page/language\language.h \
-  ../source/page/main/Page.h ../source/app/System\Save.h \
-  ../mcu/driver/inc\flash.h ../source/driver/extra\led.h \
-  ../mcu/driver/inc\gpio.h ../source/app/System\System.h \
+  ../mcu/common\interrupts_hc32l19x.h ../mcu/driver/inc\ddl.h \
+  ../source/common\ddl_device.h ../source/driver/mcu\UserTim4.h \
+  ../source/common\common.h ../source/common/debugLOG.h \
+  D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\stdarg.h \
+  ../source/extra/SEGGER_RTT_V760c/RTT\SEGGER_RTT.h \
+  ../source/extra/SEGGER_RTT_V760c/RTT/../Config/SEGGER_RTT_Conf.h \
+  ../source/driver/mcu\UserUart1.h ../source/common/error.h \
+  ../source/driver/mcu\UserTim6.h ../mcu/driver/inc\adt.h \
+  ../source/page/language\language.h ../source/page/main/Page.h \
+  ../source/app/System\Save.h ../mcu/driver/inc\flash.h \
+  ../source/driver/extra\led.h ../source/app/System\System.h \
   ../source/app/System/AppManage.h ../source/common\DataPort.h

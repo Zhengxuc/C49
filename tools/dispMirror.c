@@ -72,13 +72,26 @@ void mirror_data(unsigned char *data, int length)
 #ifdef MAIN
 int main()
 {
-    for (int i = 0; i < DISP_HOR_RES; i++)
+    /* 画一个朝左的箭头：横线(行15 列8~28) + 两翼斜线 */
+    for (int col = 8; col <= 28; col++)
     {
-        disp_buffer[0][i] = 0x01;
+        disp_buffer[15 / 8][col] |= (1 << (15 % 8));
     }
-    disp_buffer[0][1] = 0xfE;
-    mirror_data(&disp_buffer[0][0], (DISP_HOR_RES * DISP_VER_RES));
+    for (int i = 1; i <= 4; i++)
+    {
+        disp_buffer[(15 - i) / 8][8 + i] |= (1 << ((15 - i) % 8)); /* 上翼 */
+        disp_buffer[(15 + i) / 8][8 + i] |= (1 << ((15 + i) % 8)); /* 下翼 */
+    }
+
+    printf("---- before mirror ----\r\n");
     disp_buff();
+
+    mirror_data(&disp_buffer[0][0], (DISP_HOR_RES * DISP_VER_RES));
+
+    printf("---- after mirror ----\r\n");
+    disp_buff();
+
+    getchar();
     return 0;
 }
 #endif

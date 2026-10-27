@@ -15,7 +15,7 @@
 /*限定a的最大值和最小值*/
 #define RANGE(min, max, a) (a > max ? max : (a < min ? min : a))
 
-enum DataListIndex
+enum DataListIndex//数据端口索引
 {
     /*
      *DATA_F_XXXX float浮点数类型
@@ -43,10 +43,10 @@ enum DataListIndex
     DATA_F_AUTO_ADJ_CONTENT_VALUE, // 内容值
 
     DATA_I_GUI_KEY_VALUE, // 界面按键值
-
     DATA_I_IP_CURRENT, // IP电流值
-
     DATA_I_INPUT_POINT, // 输入电流 4-20mA 换算值 0~1000（对应 0.0%~100.0%）
+    DATA_I_SETPOINT,    // 闭环设定值 0~1000（由 Setpoint 模块按控制模式生产）
+    DATA_I_MANUAL_CMD,  // 纯手动指令：+1 按住上行满充 / -1 按住下行满排 / 0 停止（GUIHome 写，ValveControl 执行）
 
     /*末尾保留最大值，用来声明数组长度*/
     DATA_MAX

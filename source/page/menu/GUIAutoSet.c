@@ -1,6 +1,7 @@
 #include "GUIPublic.h"
 #include "Box.h"
 #include "Save.h"
+#include "ValveParam.h"    /* 保存后热更新 deadband 用 */
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_AUTO_SET
@@ -34,11 +35,17 @@ EXPORT_PAGE(GUI_OBJECT, GUI_ID, s_stGUIActions);
 static SGUI_LIST *ActivedObject;
 static SGUI_LIST AutoSetListObject;
 
+/* 弹框绑定的本地变量（进入页面时从 Flash RAM 缓存装载，保存时写回） */
+static float32_t val_actuator;   /* 执行器类型档位 0/1 */
+static float32_t val_balance;    /* 性能平衡档位 0~4 */
+static float32_t val_error_pct;  /* 冗余误差，单位 %（0.3~10.0）；存储为 ×10 整型 3~100 */
+static float32_t val_friction;   /* 摩擦系数档位 0/1 */
+
 enum
 {
     ID_ACTUATOR_TYPE,   // 执行器类型
     ID_BALANCE,         // 性能平衡
-    ID_REDUNDANT_ERROR, // 沉余误差
+    ID_REDUNDANT_ERROR, // 冗余误差
     ID_FRICTIONMETER,   // 摩擦系数
 
     ID_COUNT,
@@ -48,20 +55,28 @@ static SGUI_ITEMS_ITEM ListItems[ID_COUNT] = {
     {"Actuator type", NULL},
     {"Balance", NULL},
     {"Redundant error", NULL},
-    {"frictionmeter", NULL},
+    {"frictionmeter", NULL},   /* 翻译键，中文显示为"阀门摩擦系数" */
 };
 
-static SGUI_ITEMS_ITEM actuator_type_itme[] = {
-    {"Line Mode", NULL},
-    {"Angle Mode", NULL},
+/* 执行器类型选项：索引即 SAVE_ACTUATOR_TYPE 存储值（中文显示"直行程LT"/"角行程ROTS"） */
+static SGUI_ITEMS_ITEM actuator_type_item[] = {
+    {"Line Mode", NULL},   /* 0 = LT 直行程 */
+    {"Angle Mode", NULL},  /* 1 = ROTS 角行程 */
 };
 
-static SGUI_ITEMS_ITEM frictionmeter_Itme[] = {
-    {"MAX Speed", NULL},
-    {"Priority Speed", NULL},
-    {"Default", NULL},
-    {"Priority Stable", NULL},
-    {"MAX Stable", NULL},
+/* 性能平衡选项：索引即 SAVE_BALANCE_LEVEL 存储值（原 frictionmeter_Itme 命名有误，实为平衡档） */
+static SGUI_ITEMS_ITEM balance_item[] = {
+    {"MAX Speed", NULL},       /* 0 最快速度 */
+    {"Priority Speed", NULL},  /* 1 速度优先 */
+    {"Default", NULL},         /* 2 适中 */
+    {"Priority Stable", NULL}, /* 3 稳定优先 */
+    {"MAX Stable", NULL},      /* 4 最佳稳定 */
+};
+
+/* 摩擦系数选项：索引即 SAVE_FRICTION_LEVEL 存储值 */
+static SGUI_ITEMS_ITEM friction_item[] = {
+    {"Low", NULL},   /* 0 低摩擦 */
+    {"High", NULL},  /* 1 高摩擦 */
 };
 
 /*参数初始化*/
@@ -74,6 +89,12 @@ HMI_ENGINE_RESULT HMI_GUI_Initialize(SGUI_SCR_DEV *pstDeviceIF)
 HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstParameters)
 {
     pstDeviceIF->fnClear(); /*清屏*/
+
+    /* 装载当前参数值（弹框绑定的初始值） */
+    val_actuator  = (float)Read_System(SAVE_ACTUATOR_TYPE);
+    val_balance   = (float)Read_System(SAVE_BALANCE_LEVEL);
+    val_error_pct = (float)Read_System(SAVE_REDUNDANT_ERROR) / 10.0f; /* 存储 3~100 → 显示 0.3~10.0% */
+    val_friction  = (float)Read_System(SAVE_FRICTION_LEVEL);
 
     /*语言翻译*/
     int list_count = sizeof(ListItems) / sizeof(SGUI_ITEMS_ITEM);
@@ -132,9 +153,34 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
             HMI_GUI_RefreshScreen(pstDeviceIF, NULL);
         return HMI_RET_NORMAL;
     case BOX_YES:
-        if (SGUI_List_GetSelection(&AutoSetListObject)->iIndex == ID_REDUNDANT_ERROR) /*保存误差*/
+        /* 确认保存：按当前列表选中项把弹框结果写入 Flash */
+        switch (SGUI_List_GetSelection(&AutoSetListObject)->iIndex)
         {
-//            Save_System(SAVE_ERROR_RANGE, getControlProgram()->system.errorRange);
+        case ID_ACTUATOR_TYPE:
+            Save_System(SAVE_ACTUATOR_TYPE, (int32_t)val_actuator);
+            ValveParam_Get()->actuator_type = (uint8_t)val_actuator;
+            DEBUG_LOGI(TAG, "save actuator type=%d", (int)val_actuator);
+            break;
+        case ID_BALANCE:
+            Save_System(SAVE_BALANCE_LEVEL, (int32_t)val_balance);
+            ValveParam_Get()->balance_level = (uint8_t)val_balance;
+            DEBUG_LOGI(TAG, "save balance=%d", (int)val_balance);
+            break;
+        case ID_REDUNDANT_ERROR: /* 冗余误差：% → ×10 整型 3~100 存储，数值即 deadband */
+        {
+            int re = (int)(val_error_pct * 10.0f + 0.5f);
+            Save_System(SAVE_REDUNDANT_ERROR, re);
+            ValveParam_Get()->deadband = re; /* 热更新，无需重启生效 */
+            DEBUG_LOGI(TAG, "save redundant error=%d (0.1%%)", re);
+            break;
+        }
+        case ID_FRICTIONMETER:
+            Save_System(SAVE_FRICTION_LEVEL, (int32_t)val_friction);
+            ValveParam_Get()->friction_level = (uint8_t)val_friction;
+            DEBUG_LOGI(TAG, "save friction=%d", (int)val_friction);
+            break;
+        default:
+            break;
         }
         SGUI_List_Repaint(pstDeviceIF, &AutoSetListObject);
         if (get_setValue_Box_State() == true)
@@ -222,26 +268,24 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
 {
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
     int select = SGUI_List_GetSelection(ActivedObject)->iIndex;
-    static float dat;
     switch (uiKeyValue)
     {
     case KEY_VALUE_ENTER:
         if (select == ID_ACTUATOR_TYPE)
             SelectValueBox(pstDeviceIF, SGUI_List_GetSelection(ActivedObject)->pstItem->cszLabelText,
-                           actuator_type_itme, get_ItemsCount(actuator_type_itme), &dat);
+                           actuator_type_item, get_ItemsCount(actuator_type_item), &val_actuator);
         else if (select == ID_BALANCE)
             SelectValueBox(pstDeviceIF, SGUI_List_GetSelection(ActivedObject)->pstItem->cszLabelText,
-                           frictionmeter_Itme, get_ItemsCount(frictionmeter_Itme), &dat);
+                           balance_item, get_ItemsCount(balance_item), &val_balance);
         else if (select == ID_REDUNDANT_ERROR)
         {
-            SetValueBoxArea(0.30f, 10.0f, 0.1f);
-//            SetValueBox(pstDeviceIF, ListItems[select].cszLabelText, &getControlProgram()->system.errorRange);
+            /* 界面按 % 调整（0.3~10.0，步长 0.1），保存时 ×10 转整型 3~100 */
+            SetValueBoxArea(0.3f, 10.0f, 0.1f);
+            SetValueBox(pstDeviceIF, ListItems[select].cszLabelText, &val_error_pct);
         }
         else if (select == ID_FRICTIONMETER)
-        {
-            SetValueBoxArea(1, 10, 1);
-            SetValueBox(pstDeviceIF, ListItems[select].cszLabelText, &dat);
-        }
+            SelectValueBox(pstDeviceIF, SGUI_List_GetSelection(ActivedObject)->pstItem->cszLabelText,
+                           friction_item, get_ItemsCount(friction_item), &val_friction);
         break;
     case KEY_VALUE_ESC:
         iProcessAction = HMI_DEMO_PROC_CANCEL;

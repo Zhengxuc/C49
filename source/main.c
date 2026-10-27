@@ -16,11 +16,13 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "SEGGER_RTT.h"
-#include "dataport.h"
+#include "DataPort.h"
 #include "KTH5702.h"
 #include "ADX111.h"
 #include "ValveControl.h"
-#include "TestDrive.h"
+#include "Setpoint.h"
+#include "ValveAutoAdjust.h"
+#include "OutputDriver.h"
 #include "AppManage.h"
 #include "Save.h"
 #include "common.h"
@@ -61,7 +63,7 @@ static void DispKeyTask(void *pvParameters)
  * 职责（一个周期内完成，保证数据新鲜度）：
  *   1. KTH5702 阀位角度 → DATA_F_ANGLE
  *   2. ADX111  输入电流 → DATA_F_INPUT_CURRENT
- *   3. ValveControl_Run() → PID → ValveOutput → UserDac(DAC)
+ *   3. ValveControl_Run() → PID → OutputDriver → UserDac(DAC)
  *
  * 不做：GUI、Flash 擦写、长时间阻塞操作
  * -------------------------------------------------------------------------- */
@@ -83,7 +85,7 @@ static void ControlTask(void *pvParameters)
             float ma = input_current_raw_to_ma_float(raw);
             Port_SetFloat(DATA_F_INPUT_CURRENT, ma);
             /* 4-20mA → 0~1000，供输入框显示 0.0~100.0% */
-            Port_SetInt(DATA_I_INPUT_POINT, ValveControl_CurrentToPoint(ma));
+            Port_SetInt(DATA_I_INPUT_POINT, Setpoint_CurrentToPoint(ma));
 
             loop_cnt++;
             if ((loop_cnt % 100) == 0)
@@ -104,11 +106,19 @@ static void ControlTask(void *pvParameters)
             }
         }
 
-        /* 闭环定位：设定/反馈 → PID → 死区 → 充排气 → DAC */
-        ValveControl_Run();
+        /* 设定值生产：按控制模式选源（按键/电流，预留485/HART）→ DATA_I_SETPOINT */
+        Setpoint_Run();
 
-        /* 驱动输出测试（已停用）：测试时恢复本行并注释上方 ValveControl_Run() */
-//        TestDrive_Run();
+        /* 同一时刻仅一套控制算法占用 DAC：
+         * 自整定页面 → 零/满位标定状态机；其它页面 → 闭环定位 */
+        if (appManage_getTask() == APP_TASK_AUTO_ADJ)
+        {
+            // ValveAutoAdjust_Run();
+        }
+        else
+        {
+            ValveControl_Run();
+        }
 
         vTaskDelay(pdMS_TO_TICKS(CONTROL_PERIOD));
     }
@@ -119,8 +129,8 @@ int32_t main(void)
     App_SysClkInit();
     SEGGER_RTT_Init();
     system_HAL_Init();
-    ValveControl_Init();
-    TestDrive_Init();
+    // ValveControl_Init();
+    OutputDriver_Init();
 
     xTaskCreate(ControlTask, "Control", TASK_CTRL_STACK, NULL, TASK_CTRL_PRIORITY, NULL);
     xTaskCreate(DispKeyTask, "DispKey", TASK_DISP_STACK, NULL, TASK_DISP_PRIORITY, NULL);
@@ -129,7 +139,7 @@ int32_t main(void)
 }
 
 static void App_SysClkInit(void)
-{
+{		//晶振的频率可以通过这个设定
     stc_sysctrl_clk_cfg_t stcClkCfg;
     /*
       38.4K校准值地址:0x00100C20ul-0x00100C21
@@ -156,9 +166,9 @@ static void App_SysClkInit(void)
 #else
 
     // CLK INIT
-    //RCH、 RCL、 XTH、 XTL 这四个时钟源中的任意两者可以相互切换； 
+    //RCH、 RCL、 XTH、 XTL 这四个时钟源中的任意两者可以相互切换； //内部rc振荡器受温度影响比较大，
     //PLL 只可与 RCH、 XTH 这两个时钟进行切换。
-    stcClkCfg.enClkSrc = SysctrlClkXTH;    // 内部RC振荡器
+    stcClkCfg.enClkSrc = SysctrlClkXTH;    // 外部高速时钟//这里使用的内部震荡器件
     stcClkCfg.enHClkDiv = SysctrlHclkDiv1; // 不分频
     stcClkCfg.enPClkDiv = SysctrlPclkDiv1; // 不分频
     Sysctrl_ClkInit(&stcClkCfg);

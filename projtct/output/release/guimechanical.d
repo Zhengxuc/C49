@@ -43,4 +43,6 @@
   ../source/common\ddl_device.h ../source/page/font\fontuft8.h \
   ../source/page/language\language.h ../source/page/main\page.h \
   ../source/page/common\Box.h ../source/page/common/SaveBox.h \
-  ../source/page/common/Box.h ../source/page/common/SetValueBox.h
+  ../source/page/common/Box.h ../source/page/common/SetValueBox.h \
+  ../source/app/System\Save.h ../mcu/driver/inc\flash.h \
+  ../source/app/AutoControl\ValveParam.h

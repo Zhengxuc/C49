@@ -3,6 +3,7 @@
 #include "save.h"
 #include "GUIMain.h"
 #include "Disp.h"
+#include "OutputDriver.h"   /* 故障模式保存后热更新 PF05 */
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_SYSTEM
@@ -40,10 +41,13 @@ static float32_t contrast_ratio = 0;
 static float32_t Language = 0;
 static float32_t DisplayMirror = 1;
 static float32_t WorkingMode = 0;
+static float32_t exec_timeout = EXEC_TIMEOUT_DEFAULT;   /* 行程时间极限（秒） */
 
+/* 安全位置（故障模式）选项：索引即 SAVE_SAFE_POSITION 存储值，
+ * 0=故障安全(FAIL_SAFE, PF05=高) 1=故障闭锁(FAIL_LOCK, PF05=低)，与 drive_mode_t 一致 */
 static SGUI_ITEMS_ITEM Working_Mode_Itme[] = {
-    {"FL", NULL},
-    {"FOC", NULL},
+    {"Fail-safe", NULL},
+    {"Fail-lock", NULL},
 };
 
 static SGUI_ITEMS_ITEM Language_Itme[] = {
@@ -57,7 +61,7 @@ static SGUI_ITEMS_ITEM Display_mirror[] = {
     {"Reversal", NULL},
 };
 
-enum
+enum //现在实际用了的参数索引
 {
     ID_Execution_timeout,   // 行程时间
     ID_Working_mode,        // 安全位置选择
@@ -93,10 +97,12 @@ HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstPara
 {
     pstDeviceIF->fnClear(); /*清屏*/
 
-    backlight = Read_System(SAVE_BACKLIGHT);
-    contrast_ratio = Read_System(SAVE_CONTRAST_RATIO);
-    Language = Read_System(SAVE_LANGUAGE);
-    DisplayMirror = Read_System(SAVE_DISPLAY_MIRROR);
+    backlight = (float)Read_System(SAVE_BACKLIGHT);
+    contrast_ratio = (float)Read_System(SAVE_CONTRAST_RATIO);
+    Language = (float)Read_System(SAVE_LANGUAGE);
+    DisplayMirror = (float)Read_System(SAVE_DISPLAY_MIRROR);
+    WorkingMode = (float)Read_System(SAVE_SAFE_POSITION);   /* 故障模式档位 0/1 */
+    exec_timeout = (float)Read_System(SAVE_EXECUTION_TIMEOUT); /* 行程时间极限（秒） */
 
     /*语言翻译*/
     int list_count = sizeof(ListItems) / sizeof(SGUI_ITEMS_ITEM);
@@ -165,19 +171,32 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
                 set_language(LANGUAGE_CH);
             else if (Language == 1)
                 set_language(LANGUAGE_EN);
-            Save_System(SAVE_LANGUAGE, Language);
+            Save_System(SAVE_LANGUAGE, (int32_t)Language);
             HMI_GUI_Prepare(pstDeviceIF, (void *)ID_Language);
         }
         else if (select == ID_Display_mirror) /*屏幕镜像*/
         {
-            Save_System(SAVE_DISPLAY_MIRROR, DisplayMirror);
+            Save_System(SAVE_DISPLAY_MIRROR, (int32_t)DisplayMirror);
             disp_hal_init();
             HMI_GUI_Prepare(pstDeviceIF, (void *)ID_Display_mirror);
         }
         else if (select == ID_CONTRAST_RATIO)
         {
             DEBUG_LOGI(TAG, "保存对比度");
-            Save_System(SAVE_CONTRAST_RATIO, contrast_ratio);
+            Save_System(SAVE_CONTRAST_RATIO, (int32_t)contrast_ratio);
+        }
+        else if (select == ID_Working_mode) /*安全位置（故障模式）*/
+        {
+            Save_System(SAVE_SAFE_POSITION, (int32_t)WorkingMode);
+            /* 热更新 PF05 电平，无需重启 */
+            OutputDriver_SetMode((WorkingMode == SAFE_POS_FAIL_LOCK) ? DRIVE_MODE_FAIL_LOCK
+                                                                  : DRIVE_MODE_FAIL_SAFE);
+            DEBUG_LOGI(TAG, "save safe position=%d", (int)WorkingMode);
+        }
+        else if (select == ID_Execution_timeout) /*行程时间极限*/
+        {
+            Save_System(SAVE_EXECUTION_TIMEOUT, (int32_t)exec_timeout);
+            DEBUG_LOGI(TAG, "save execution timeout=%d s", (int)exec_timeout);
         }
         SGUI_List_Repaint(pstDeviceIF, &AutoSetListObject);
         if (get_setValue_Box_State() == true)
@@ -278,7 +297,6 @@ HMI_ENGINE_RESULT HMI_GUI_PostProcess(SGUI_SCR_DEV *pstDeviceIF, HMI_ENGINE_RESU
 static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 uiKeyValue)
 {
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
-    static float32_t dat = 0;
     int select = SGUI_List_GetSelection(ActivedObject)->iIndex;
 
     switch (uiKeyValue)
@@ -301,8 +319,8 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
         }
         else if (select == ID_Execution_timeout)
         {
-            SetValueBoxArea(10, 200, 1);
-            SetValueBox(pstDeviceIF, ListItems[select].cszLabelText, &dat);
+            SetValueBoxArea(EXEC_TIMEOUT_MIN, EXEC_TIMEOUT_MAX, 1);
+            SetValueBox(pstDeviceIF, ListItems[select].cszLabelText, &exec_timeout);
         }
         else if (select == ID_Screen_brightness)
         {

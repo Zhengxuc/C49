@@ -312,7 +312,7 @@
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
-            <Optim>0</Optim>
+            <Optim>3</Optim>
             <oTime>0</oTime>
             <SplitLS>0</SplitLS>
             <OneElfS>1</OneElfS>
@@ -623,11 +623,6 @@
               <FilePath>..\source\app\System\SystemServer.c</FilePath>
             </File>
             <File>
-              <FileName>Flash_RW.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\source\app\System\Flash_RW.c</FilePath>
-            </File>
-            <File>
               <FileName>ValveParam.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\source\app\AutoControl\ValveParam.c</FilePath>
@@ -638,19 +633,29 @@
               <FilePath>..\source\app\AutoControl\ValvePID.c</FilePath>
             </File>
             <File>
-              <FileName>ValveOutput.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\source\app\AutoControl\ValveOutput.c</FilePath>
-            </File>
-            <File>
               <FileName>ValveControl.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\source\app\AutoControl\ValveControl.c</FilePath>
             </File>
             <File>
-              <FileName>TestDrive.c</FileName>
+              <FileName>Setpoint.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\source\app\AutoControl\TestDrive.c</FilePath>
+              <FilePath>..\source\app\AutoControl\Setpoint.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>AutoAdjust</GroupName>
+          <Files>
+            <File>
+              <FileName>ValveAutoAdjust.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoAdjust\ValveAutoAdjust.c</FilePath>
+            </File>
+            <File>
+              <FileName>OutputDriver.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\app\AutoAdjust\OutputDriver.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -772,6 +777,16 @@
               <FileType>1</FileType>
               <FilePath>..\source\extra\simplegui\HMI\src\HMI_Engine.c</FilePath>
             </File>
+            <File>
+              <FileName>GUIFeedback.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\page\menu\GUIFeedback.c</FilePath>
+            </File>
+            <File>
+              <FileName>GUIPst.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\source\page\menu\GUIPst.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -828,9 +843,9 @@
               <FilePath>..\source\driver\extra\led.c</FilePath>
             </File>
             <File>
-              <FileName>UserUart1.c</FileName>
+              <FileName>KTH5702.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\source\driver\mcu\UserUart1.c</FilePath>
+              <FilePath>..\source\driver\extra\KTH5702.c</FilePath>
             </File>
             <File>
               <FileName>ADX111.c</FileName>
@@ -838,9 +853,9 @@
               <FilePath>..\source\driver\extra\ADX111.c</FilePath>
             </File>
             <File>
-              <FileName>KTH5702.c</FileName>
+              <FileName>UserUart1.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\source\driver\extra\KTH5702.c</FilePath>
+              <FilePath>..\source\driver\mcu\UserUart1.c</FilePath>
             </File>
           </Files>
         </Group>

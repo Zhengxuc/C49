@@ -16,17 +16,16 @@
 #include "UserUart1.h"
 
 #define SEGGER_RTT
-#define LOG_LOCAL_LEVEL LOG_INFO // 日志调试等级
+#define LOG_LOCAL_LEVEL LOG_NONE // 日志调试等级
 #define CONFIG_LOG_COLORS 1       // 日志是否启用颜色支持
 
-typedef enum
-{
-    LOG_NONE,   /*!< No log output */
-    LOG_ERROR,  /*!< Critical errors, software module can not recover on its own */
-    LOG_WARN,   /*!< Error conditions from which recovery measures have been taken */
-    LOG_INFO,   /*!< Information messages which describe normal flow of events */
-    LOG_DEBUG,  /*!< Extra information which is not necessary for normal use (values, pointers, sizes, etc). */
-    LOG_VERBOSE /*!< Bigger chunks of debugging information, or frequent messages which can potentially flood the output. */
+typedef enum {
+    LOG_NONE,     // 不输出
+    LOG_ERROR,    // 严重错误，模块自身无法恢复
+    LOG_WARN,     // 已采取恢复措施的错误
+    LOG_INFO,     // 正常流程信息（默认输出最低级别）
+    LOG_DEBUG,    // 调试细节（变量值、指针、尺寸等）
+    LOG_VERBOSE   // 大段/高频调试信息
 } log_level_t;
 
 #if CONFIG_LOG_COLORS

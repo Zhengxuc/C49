@@ -45,4 +45,5 @@
   ../source/extra/simplegui/GUI/inc\SGUI_ProcessBar.h \
   ../source/app/System\System.h ../source/app/System/AppManage.h \
   ../source/driver/mcu\UserTim6.h ../mcu/driver/inc\adt.h \
-  ../source/page/common\Draw.h
+  ../source/page/common\Draw.h \
+  ../source/app/AutoAdjust\ValveAutoAdjust.h

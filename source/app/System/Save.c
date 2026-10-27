@@ -1,5 +1,23 @@
+/*
+ * @Description: 参数持久化存储模块 —— Save.h 接口的实现。
+ *
+ * 核心思想：RAM 缓存 + Flash 镜像。
+ *   - 所有读操作走 RAM（快、无寿命损耗）
+ *   - 所有写操作同步更新 RAM 缓存 + 整区回写 Flash
+ *   - 上电时 Flash 整区载入 RAM，之后 Flash 只在"保存"时被触碰
+ *
+ * 三份 RAM 缓存与 Flash 三区一一对应：
+ *   g_systemParams[]  ←→ 系统区（13 个 float + 头部校验）
+ *   g_adjustData[]    ←→ 校准区（5 个 32B 槽位，字节镜像）
+ *   g_logData[]       ←→ 日志区（预留）
+ *
+ * Flash 操作模式约定（HC32L196 特有）：
+ *   读=内存映射直读（memcpy 即可），但擦/写前必须 Flash_OpModeConfig
+ *   切换到对应模式，完成后切回 FlashReadMode，且所在扇区需先 SLOCK 解锁。
+ */
 #include "Save.h"
 #include "Disp.h"
+#include "ValveParam.h"    /* valve_param_t *ValveParam_Get() — 控制参数 RAM 缓存 */
 #include <string.h>
 #include "stdlib.h"
 
@@ -9,11 +27,11 @@ static const char *TAG = "Save";
 #define INPUT_CALIB_DEFAULT_4MA     3227
 #define INPUT_CALIB_DEFAULT_20MA    15844
 
-// 系统参数缓存（RAM中保存）
-static float g_systemParams[SAVE_SYSTEM_PARAM_COUNT];
-static uint8_t g_adjustData[SAVE_ADJUST_DATA_SIZE];
-static uint8_t g_logData[SAVE_LOG_DATA_SIZE];
-static uint8_t g_isSystemParamsLoaded = 0;
+/* ---------------- RAM 缓存（Flash 各区的运行时镜像） ---------------- */
+static int32_t g_systemParams[SAVE_SYSTEM_PARAM_COUNT]; /* 系统区镜像：21 个 int32（整型语义） */
+static uint8_t g_adjustData[SAVE_ADJUST_DATA_SIZE];   /* 校准区镜像：512B 字节镜像 */
+static uint8_t g_logData[SAVE_LOG_DATA_SIZE];         /* 日志区镜像（预留） */
+static uint8_t g_isSystemParamsLoaded = 0;            /* 系统区已载入标志：Read_System 懒加载用 */
 
 // CRC32计算表
 static const uint32_t crc32_table[] = {
@@ -51,6 +69,9 @@ static const uint32_t crc32_table[] = {
     0x2BB45A92, 0x5CB36A04, 0xC2D7FFA7, 0xB5D0CF31, 0x2CD99E8B, 0x5BDEAE1D
 };
 
+/* CRC32 查表法（多项式 0xEDB88320，即标准 CRC-32/ISO-HDLC 反射形式）。
+ * 用于系统区参数整块校验：写入前算好存头部，上电读出后重算比对，
+ * 任何一位翻转/错位都能检出（含枚举扩容导致的数据错位） */
 static uint32_t calculate_crc32(const uint8_t *data, uint32_t len)
 {
     uint32_t crc = 0xFFFFFFFF;
@@ -60,7 +81,9 @@ static uint32_t calculate_crc32(const uint8_t *data, uint32_t len)
     return crc ^ 0xFFFFFFFF;
 }
 
-/** 与 mcu/driver/src/flash.c 中 Flash_Init 的 u8FreqCfg 档位一致（按 HCLK 选档） */
+/** Flash_Init 的编程时间参数需按当前主频选档（原厂手册要求，档位不对会导致擦写异常）。
+ *  与 mcu/driver/src/flash.c 中 Flash_Init 的 u8FreqCfg 档位一致（按 HCLK 选档）。
+ *  返回值：1~12（HCLK 越高编程等待周期越长） */
 static uint8_t save_flash_hclk_to_freq_cfg(void)
 {
     SystemCoreClockUpdate();//获取当前时钟
@@ -87,9 +110,14 @@ static uint8_t save_flash_hclk_to_freq_cfg(void)
 }
 
 /**
- * 与原厂例程一致：擦写前须对参数区所在扇区组解锁（SLOCK 中 bit=1 为解锁）。
- * 按 SAVE 起止地址计算 Lock0~3 及 bit，读回当前寄存器后 OR，避免把其它扇区误锁。
- * 扇区划分与手册一致时：256KB Flash、512B/扇区下 0x3F800 落在 Sector508~511 → 仅动 SLOCK3.bit31。
+ * @brief 擦写前对参数区所在扇区组解锁（SLOCK 寄存器，bit=1 为解锁）。
+ *
+ * HC32L196 的 Flash 出厂全锁，每个 SLOCKx 寄存器管 128 个扇区、
+ * 每个扇区占 1 bit（512 扇区 → SLOCK0~3 四个 32bit 寄存器）。
+ * 按 SAVE 区起止地址算出涉及哪些扇区、对应哪些 bit，读回当前
+ * 寄存器值后按位 OR 上去——只解锁自己要动的，不碰其它扇区状态
+ * （代码区扇区保持锁定，误写指令也不会生效，多一层保护）。
+ * 扇区划分与手册一致时：256KB Flash、512B/扇区下参数区落在 Sector508~510。
  */
 static void save_flash_unlock_param_area(void)
 {
@@ -123,7 +151,8 @@ static void save_flash_unlock_param_area(void)
     }
 }
 
-// Flash写入（带重试）
+/** Flash 写入（带最多 10 次重试 + 1ms 间隔，写失败抛 FLASH_WRITE_ERROR 异常并返回 -1）。
+ *  调用前须已 Flash_OpModeConfig(FlashWriteMode)，调用后由外层切回读模式 */
 static int8_t flash_write_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
 {
     uint32_t error = 1;
@@ -142,7 +171,8 @@ static int8_t flash_write_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
     return 0;
 }
 
-// Flash读取（带重试）
+/** Flash 读取：HC32L196 为内存映射 Flash，直接 memcpy 即可，不会失败。
+ *  保留函数形式是为了与写接口对称，方便将来换存储介质（如外挂 SPI Flash） */
 static int8_t flash_read_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
 {
     // Flash读取直接内存访问，无需特殊处理
@@ -151,13 +181,25 @@ static int8_t flash_read_with_retry(uint32_t addr, uint8_t *data, uint32_t len)
 }
 
 
-//
-// 擦除扇区（如果地址范围跨扇区需要擦除多个）
+/**
+ * @brief 擦除 [start_addr, end_addr) 覆盖到的所有扇区（512B 对齐）。
+ *
+ * ★ end_addr 为开区间上界：先减 1 再对齐扇区边界。
+ *   若直接对齐，当 end_addr 正好落在扇区边界上时会多擦一个扇区
+ *   （教训：多擦邻区 = 邻区数据丢失，曾导致"断电重启参数丢失"）。
+ *
+ * 擦完每个扇区延时 5ms 等待硬件完成，最后切回 FlashReadMode。
+ * 调用前需已解锁目标扇区（save_flash_unlock_param_area）。
+ */
 static int8_t flash_sector_erase_range(uint32_t start_addr, uint32_t end_addr)
 {
+    if (end_addr <= start_addr) {
+        return 0;
+    }
     uint32_t sector_mask = ~(SAVE_FLASH_SECTOR_SIZE - 1);
     uint32_t sector_start = start_addr & sector_mask;//start
-    uint32_t sector_end = end_addr & sector_mask;//end
+    /* end_addr为开区间上界：先减1再对齐，否则正好落在扇区边界时会多擦一个扇区 */
+    uint32_t sector_end = (end_addr - 1u) & sector_mask;//end
     
     // 配置为扇区擦除模式
     if (Flash_OpModeConfig(FlashSectorEraseMode) != Ok) {
@@ -176,7 +218,22 @@ static int8_t flash_sector_erase_range(uint32_t start_addr, uint32_t end_addr)
     return 0;
 }
 
-// Flash初始化
+/**
+ * @brief Flash 存储初始化 —— 唯一直接操作 Flash 硬件的入口函数。
+ *
+ * 执行顺序（不可调换）：
+ *   1. Flash_Init：按 HCLK 档位配置编程时序（擦写前置条件）
+ *   2. SLOCK 解锁参数区扇区
+ *   3. 读系统区头部 validFlag，分两条路径：
+ *      - 无效（首次上电 / 数据损坏 / 版本升级）→ 灌默认值 + 整块写 Flash
+ *        （默认值清单须与 enum Save_System 保持同步）
+ *      - 有效 → Load_System_Params_From_Flash 载入 RAM（CRC 在其中校验）
+ *   4. 校准区整区直读 Flash 填充 g_adjustData 缓存
+ *      ★ 必须直读 Flash，不能走 Read_System_block（它优先读 RAM，
+ *        而此刻 RAM 缓存还没填，会读到全 0——上电专用路径）
+ *
+ * 由 Save_System_Init 第一步调用，通常不应在别处直接调用。
+ */
 int8_t Save_Flash_Init(void)
 {
     /* 与原厂例程一致：先 Flash_Init（编程时间等），第二参数与样例一致为 DeepSleep 下 Flash 低功耗策略 */
@@ -194,7 +251,7 @@ int8_t Save_Flash_Init(void)
         // 首次使用，初始化默认参数
         DEBUG_LOGI(TAG, "Flash param area invalid, init with default values");
         
-        // 设置默认系统参数
+        // 设置默认系统参数【★ 新增参数必须在此补默认值，与 Save_System_Init 分发配对】
         for (int i = 0; i < SAVE_SYSTEM_PARAM_COUNT; i++) {
             g_systemParams[i] = 0;
         }
@@ -202,8 +259,31 @@ int8_t Save_Flash_Init(void)
         g_systemParams[SAVE_CONTRAST_RATIO] = 10;
         g_systemParams[SAVE_LANGUAGE] = 0;
         g_systemParams[SAVE_DISPLAY_MIRROR] = 0;
-        g_systemParams[SAVE_ERROR_RANGE] = 0.3f;
+        g_systemParams[SAVE_ERROR_RANGE] = 3;                   /* 0.3%（×10，遗留槽位不分发） */
+        g_systemParams[SAVE_ANGLE_MIN] = ANGLE_MIN_DEFAULT;    /* 未标定：默认 0.00° */
+        g_systemParams[SAVE_ANGLE_MAX] = ANGLE_MAX_DEFAULT;    /* 90.00°（×100） */
 //        g_systemParams[SAVE_CONTROL_MODE] = CONTROL_MODE_CURRENT_PERCENT;
+        g_systemParams[SAVE_CONTROL_KP] = PID_KP_DEFAULT;    /* Kp=5.0（×10 缩放整型） */
+        g_systemParams[SAVE_CONTROL_KI] = PID_KI_DEFAULT;    /* Ki=0.05（×100） */
+        g_systemParams[SAVE_CONTROL_KD] = PID_KD_DEFAULT;    /* Kd=0.0（×100） */
+        g_systemParams[SAVE_CONTROL_KP_DOWN] = PID_KP_DEFAULT; /* 下行默认同上行 */
+        g_systemParams[SAVE_CONTROL_KI_DOWN] = PID_KI_DEFAULT;
+        g_systemParams[SAVE_CONTROL_KD_DOWN] = PID_KD_DEFAULT;
+        /* ---- v3 四项（与 ValveParam_SetDefault 保持一致） ---- */
+        g_systemParams[SAVE_ACTUATOR_TYPE]   = ACTUATOR_TYPE_LT;    /* 直行程 */
+        g_systemParams[SAVE_BALANCE_LEVEL]   = BALANCE_DEFAULT;     /* 适中 */
+        g_systemParams[SAVE_REDUNDANT_ERROR] = 3;                   /* 0.3% → deadband=3 */
+        g_systemParams[SAVE_FRICTION_LEVEL]  = FRICTION_LOW;        /* 低摩擦 */
+        /* ---- v4 ---- */
+        g_systemParams[SAVE_MECHANICAL_DIRECTION] = MECH_DIR_POSITIVE; /* 正向 */
+        /* ---- v5 ---- */
+        g_systemParams[SAVE_MECHANICAL_MIN] = MECH_TRAVEL_MIN;      /* 行程限位默认 0~1000 全行程 */
+        g_systemParams[SAVE_MECHANICAL_MAX] = MECH_TRAVEL_MAX;
+        /* ---- v6 ---- */
+        g_systemParams[SAVE_FEEDBACK_DIRECTION] = FB_DIR_POSITIVE;  /* 反馈方向默认正向 */
+        g_systemParams[SAVE_PST_PERIOD] = PST_PERIOD_DEFAULT;       /* 定时任务默认未启用 */
+        g_systemParams[SAVE_SAFE_POSITION] = SAFE_POS_FAIL_SAFE;    /* 故障模式默认故障安全 */
+        g_systemParams[SAVE_EXECUTION_TIMEOUT] = EXEC_TIMEOUT_DEFAULT; /* 行程时间极限默认 60s */
         
         // 保存到Flash
         Save_System_Params_To_Flash();
@@ -214,46 +294,55 @@ int8_t Save_Flash_Init(void)
     } else {
         // 读取已有参数
         Load_System_Params_From_Flash();
-        // 读取校准数据
-        Read_System_block(SAVE_ADJUST_ANGLE, g_adjustData, sizeof(g_adjustData));
+        // 读取校准数据：必须直读Flash整区填充缓存，不能走RAM缓存（上电时缓存为空）
+        flash_read_with_retry(SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE,
+                              g_adjustData, sizeof(g_adjustData));
     }
     
     return 0;
 }
 
-// 保存所有系统参数到Flash
+/** 系统区整块落盘：g_systemParams → system_param_header_t → 擦扇区A → 写回。
+ *  组头部（validFlag + CRC32）在函数内现算，调用方只需保证 RAM 缓存已更新。
+ *  触发时机：Save_Flash_Init 首次上电默认值 / Save_System 单参数保存 / data_Restore */
 int8_t Save_System_Params_To_Flash(void)
 {
     system_param_header_t header;//定义一个存储实例
+    /* 注意：buffer 尺寸偏大——header_t 里已含 systemParams[]（60B），
+     * 又多加了 sizeof(g_systemParams)（52B），实际只有前 60B 被填充。
+     * 下方 sizeof(buffer) 写入会把后 52B 未初始化栈数据带进 Flash
+     * （读回只取 sizeof(header)，功能不受影响；TODO 可改成只写 sizeof(header)） */
     uint8_t buffer[sizeof(system_param_header_t) + sizeof(g_systemParams)];
-    
-    header.validFlag = SAVE_VALID_FLAG;//标志
-    memcpy(header.systemParams, g_systemParams, sizeof(g_systemParams));//内存拷贝
-    header.crc32 = calculate_crc32((uint8_t *)header.systemParams, sizeof(header.systemParams));
-    
-    memcpy(buffer, &header, sizeof(header));
-    
-    // 擦除Flash区域
+
+    header.validFlag = SAVE_VALID_FLAG;//有效标志（版本变更时同步更新）
+    memcpy(header.systemParams, g_systemParams, sizeof(g_systemParams));//参数数组快照
+    header.crc32 = calculate_crc32((uint8_t *)header.systemParams, sizeof(header.systemParams));//CRC 只覆盖参数区
+
+    memcpy(buffer, &header, sizeof(header));//头+参数 60B 打包
+
+    // 擦除系统区（start=0x3F800，end 为开区间上界→只擦扇区A，不波及校准区）
     uint32_t end_addr = SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE;
     if (flash_sector_erase_range(SAVE_FLASH_START_ADDR, end_addr) != 0) {
         return -1;
     }
-    
-    // 配置为写模式
+
+    // 配置为写模式（擦写前必须切模式，HC32L196 读/写/擦三种模式互斥）
     if (Flash_OpModeConfig(FlashWriteMode) != Ok) {
         return -1;
     }
-    
-    // 写入数据
+
+    // 写入数据（带重试）
     int8_t ret = flash_write_with_retry(SAVE_FLASH_START_ADDR, buffer, sizeof(buffer));
-    
-    // 切换回读模式
+
+    // 切换回读模式（务必恢复，否则后续内存映射读会异常）
     Flash_OpModeConfig(FlashReadMode);
-    
+
     return ret;
 }
 
-// 从Flash读取所有系统参数
+/** 系统区整块载入：Flash 读头部 → 双层校验（validFlag + CRC32）→ 拷入 RAM 缓存。
+ *  校验任一失败返回 -1 且不置 g_isSystemParamsLoaded（此时 RAM 缓存内容不可信），
+ *  由调用方决定是否走默认值路径。CRC 校验同时防位翻转和参数数组错位 */
 int8_t Load_System_Params_From_Flash(void)
 {
     system_param_header_t header;
@@ -274,15 +363,17 @@ int8_t Load_System_Params_From_Flash(void)
     return 0;
 }
 
-// 保存单个系统参数（同时更新RAM和Flash）
-void Save_System(enum Save_System index, float32_t dat)
+/** 写单个系统参数：先更新 RAM 缓存，再整块回写 Flash（含擦除，约 10ms 级耗时）。
+ *  ★ 因为是整块回写，两次连续 Save 会擦写两次 Flash——批量改参数时注意
+ *    Flash 寿命（1 万次/扇区），或考虑将来改成"脏标记 + 延迟合并落盘" */
+void Save_System(enum Save_System index, int32_t dat)
 {
     if (index >= SAVE_SYSTEM_PARAM_COUNT) { //如果超出了范围
         DEBUG_LOGE(TAG, "Invalid system param index: %d", index);//debug报错
         return;
     }
-    
-    DEBUG_LOGD(TAG, "Save System index:%d data:%.2f", index, dat);
+
+    DEBUG_LOGD(TAG, "Save System index:%d data:%d", index, (int)dat);
     
     // 更新RAM缓存
     g_systemParams[index] = dat;
@@ -291,26 +382,31 @@ void Save_System(enum Save_System index, float32_t dat)
     Save_System_Params_To_Flash();
 }
 
-// 读取单个系统参数
-float32_t Read_System(enum Save_System index)
+/** 读单个系统参数：纯 RAM 读取，不碰 Flash、无耗时。
+ *  正常流程下 Save_System_Init 已在上电时调过一次（缓存必已载入）；
+ *  懒加载分支（g_isSystemParamsLoaded==0）只是防御性兜底。
+ *  ★ 上电初始化请勿依赖此懒加载装载数据——分发逻辑统一放 Save_System_Init */
+int32_t Read_System(enum Save_System index)
 {
     if (index >= SAVE_SYSTEM_PARAM_COUNT) {
         DEBUG_LOGE(TAG, "Invalid system param index: %d", index);
         return 0;
     }
-    
+
     if (!g_isSystemParamsLoaded) {
         Load_System_Params_From_Flash();
     }
-    
-    DEBUG_LOGD(TAG, "Read System index:%d data:%.2f", index, g_systemParams[index]);
+
+    DEBUG_LOGD(TAG, "Read System index:%d data:%d", index, (int)g_systemParams[index]);
     return g_systemParams[index];
 }
 
-/* 读取控制模式（非法值回落电流模式） */
+/* 控制模式读写（存于 SAVE_CONTROL_MODE 槽位，整型直存）。
+ * 读取时做范围校验，Flash 脏数据/升级残留回落 CONTROL_MODE_CURRENT_PERCENT，
+ * 避免闭环跑进不存在的模式分支 */
 int get_inpu_mode(void)
 {
-    int mode = (int)Read_System(SAVE_CONTROL_MODE);
+    int mode = Read_System(SAVE_CONTROL_MODE);
     if (mode < 0 || mode >= CONTROL_MODE_END) {
         mode = CONTROL_MODE_CURRENT_PERCENT;
     }
@@ -323,28 +419,31 @@ void save_inpu_mode(int mode)
     if (mode < 0 || mode >= CONTROL_MODE_END) {
         mode = CONTROL_MODE_CURRENT_PERCENT;
     }
-    Save_System(SAVE_CONTROL_MODE, (float32_t)mode);
+    Save_System(SAVE_CONTROL_MODE, mode);
 }
 
-// 保存块数据（校准参数等）
+/** 写校准区块：更新 RAM 缓存对应槽位 → 擦整个校准区扇区B → 整区回写。
+ *  @param addr 校准区"内部偏移"（SAVE_ADJUST_ANGLE 等宏，0~511），函数内部
+ *              再加区域基地址 0x3FA00 —— 调用方传绝对地址会写错区域
+ *  @param dat  待写入数据指针；若指向 g_adjustData 自身则跳过自拷贝
+ *  校准区槽位各自带 validFlag 自校验，整区擦写不影响系统区（扇区独占） */
 int8_t Save_System_block(uint32_t addr, void *dat, uint32_t len)
 {
-    uint32_t flash_addr = SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE + addr;
-    
-    if (flash_addr + len > SAVE_FLASH_START_ADDR + SAVE_TOTAL_SIZE) {
-        DEBUG_LOGE(TAG, "Save block out of range! addr=0x%08X, len=%d", addr, len);
+    if (addr + len > SAVE_ADJUST_DATA_SIZE) {
+        DEBUG_LOGE(TAG, "Save block out of range! addr=%lu, len=%lu",
+                   (unsigned long)addr, (unsigned long)len);
         return -1;
     }
-    
-    // 更新RAM缓存
-    if (addr < SAVE_ADJUST_DATA_SIZE) {
+
+    // 更新RAM缓存（初始化时dat可能就是g_adjustData自身，跳过自拷贝）
+    if (dat != (void *)g_adjustData) {
         memcpy(g_adjustData + addr, dat, len);
     }
-    
-    // 擦除整个校准数据区域（简化处理，实际可以只擦除影响的扇区）
-    uint32_t start_addr = SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE;
-    uint32_t end_addr = start_addr + SAVE_ADJUST_DATA_SIZE;
-    if (flash_sector_erase_range(start_addr, end_addr) != 0) {
+
+    // 擦除整个校准数据区域（独占一个扇区，不影响其它区域）
+    uint32_t start_addr = SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE;//校准区基地址
+    uint32_t end_addr = start_addr + SAVE_ADJUST_DATA_SIZE;//校准区结束地址
+    if (flash_sector_erase_range(start_addr, end_addr) != 0) {//擦除扇区
         return -1;
     }
     
@@ -362,103 +461,235 @@ int8_t Save_System_block(uint32_t addr, void *dat, uint32_t len)
     return ret;
 }
 
-// 读取块数据
+/** 读校准区块：从 RAM 缓存 g_adjustData 拷贝，不碰 Flash。
+ *  @param addr 校准区内部偏移（同 Save_System_block 约定）
+ *  缓存由 Save_Flash_Init 上电时整区直读 Flash 填充；
+ *  ★ 上电装载数据时应直读 Flash（flash_read_with_retry），不要用本函数
+ *    （此时缓存还没填，会读到全 0——详见 Save_Flash_Init 注释） */
 int8_t Read_System_block(uint32_t addr, void *dat, uint32_t len)
 {
-    uint32_t flash_addr = SAVE_FLASH_START_ADDR + SAVE_SYSTEM_DATA_SIZE + addr;
-    
-    if (flash_addr + len > SAVE_FLASH_START_ADDR + SAVE_TOTAL_SIZE) {
-        DEBUG_LOGE(TAG, "Read block out of range! addr=0x%08X, len=%d", addr, len);
+    if (addr + len > SAVE_ADJUST_DATA_SIZE) {
+        DEBUG_LOGE(TAG, "Read block out of range! addr=%lu, len=%lu",
+                   (unsigned long)addr, (unsigned long)len);
         return -1;
     }
-    
-    // 从RAM缓存读取
-    if (addr < SAVE_ADJUST_DATA_SIZE) {
-        memcpy(dat, g_adjustData + addr, len);
-    } else {
-        // 直接从Flash读取
-        flash_read_with_retry(flash_addr, (uint8_t *)dat, len);
-    }
-    
+
+    memcpy(dat, g_adjustData + addr, len);
     return 0;
 }
 
-void data_Restore()
+/** 恢复出厂设置：把关键系统参数逐个刷回默认值（每个参数触发一次整块 Flash 回写）。
+ *  当前不重置 SAVE_CONTROL_MODE / SAVE_CONTROL_KP 等控制参数，也不清校准区
+ *  ——若需要"彻底恢复出厂"，应同步补齐并调用页面刷新 */
+void data_Restore(void)
 {
     Save_System(SAVE_BACKLIGHT, 100);                             // 亮度
     Save_System(SAVE_CONTRAST_RATIO, 10);                         // 对比对
     Save_System(SAVE_LANGUAGE, 0);                                // 语言中文
     Save_System(SAVE_DISPLAY_MIRROR, 0);                          // 屏幕自动
-    Save_System(SAVE_ERROR_RANGE, 0.3f);                          // 允许误差0.3
+    Save_System(SAVE_ERROR_RANGE, 3);                             // 允许误差 0.3%（×10，遗留槽位）
+    Save_System(SAVE_ANGLE_MIN, ANGLE_MIN_DEFAULT);               // 阀位零位默认 0.00°
+    Save_System(SAVE_ANGLE_MAX, ANGLE_MAX_DEFAULT);               // 阀位满位默认 90.00°（×100）
 //    Save_System(SAVE_CONTROL_MODE, CONTROL_MODE_CURRENT_PERCENT); // 控制模式
 }
 
+
+
+/**
+ * @brief 上电参数统一分发入口 —— 所有 Flash 参数从这里流向各模块。
+ *
+ * 分发顺序（模块间有依赖，顺序不可调换）：
+ *   第零步  ValveParam_SetDefault  灌硬编码默认值兜底
+ *           （先默认后覆盖：Flash 有效值只覆盖部分字段，其余字段如
+ *            k3/k4 补偿、dac_mid 等无 Flash 槽位，全靠这步给值）
+ *   第一步  Save_Flash_Init        Flash→RAM 双区缓存（唯一碰硬件处）
+ *   第二步  校准区 → 输入电流校准（槽位自校验，失败用默认斜率）
+ *   第三步  系统区 → 屏幕模块（对比度/背光/语言/镜像）
+ *   第四步  系统区 → 控制模块 ValveParam（含范围合法性检查，
+ *           Flash 值不合理时保留第零步默认值，防止脏数据进闭环）
+ *   第五步  系统区 → 控制模式（非法值回落电流模式）
+ *
+ * ★ 各模块的 Init 函数（如 ValveControl_Init）不再自己 Read_System，
+ *   统一从这里拿最终值——避免"谁先初始化谁覆盖"的时序坑。
+ * ★ 新增参数的分发代码也加在这里（配对 Save_Flash_Init 默认值）。
+ */
 void Save_System_Init(void)
 {
-    // 初始化Flash存储
+    /* ========== 第零步：先刷模块默认值（作为 Flash 无效时的兜底） ========== */
+    ValveParam_SetDefault();//
+
+    /* ========== 第一步：Flash → RAM 缓存 ========== */
     Save_Flash_Init();
-    
-    /*设置对比对*/
-    lcd_set_contrast_ratio(Read_System(SAVE_CONTRAST_RATIO));
 
-    /*读取控制模式*/
-    // control_mode_t input_mode;
-    // input_mode = (int32_t)Read_System(SAVE_CONTROL_MODE);
-    // DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
-    // if (input_mode < 0 || input_mode >= CONTROL_MODE_END)
-    //     input_mode = CONTROL_MODE_CURRENT_PERCENT;
-    // set_input_confit_mode(input_mode);
-    // DEBUG_LOGI(TAG, "输入控制模式:%d", input_mode);
-
-    // /*读取误差范围*/
-    // getControlProgram()->system.errorRange = Read_System(SAVE_ERROR_RANGE);
-    // if (getControlProgram()->system.errorRange < 0.3)
-    //     getControlProgram()->system.errorRange = 0.3;
-    // else if (getControlProgram()->system.errorRange > 10)
-    //     getControlProgram()->system.errorRange = 10;
-    // DEBUG_LOGI(TAG, "误差范围:%0.1f%%", getControlProgram()->system.errorRange);
-
-
-
-
-//    /*读取输入电流校准数据*/
-    input_calibration_t input_current;
-    if (0 == Read_System_block(SAVE_INPUT_CURRENT, &input_current, sizeof(input_calibration_t)))
+    /* ========== 第二步：校准区 → 各模块（输入电流校准） ========== */
     {
-        if (input_current.validFlag == INPUT_CALIB_VALID_FLAG &&
-            input_current.calibrated == 1 &&
-            input_current.raw_20ma > input_current.raw_4ma)
+        input_calibration_t input_current;
+        if (0 == Read_System_block(SAVE_INPUT_CURRENT, &input_current, sizeof(input_calibration_t)))
         {
-            set_input_calibration(&input_current);
-            DEBUG_LOGI(TAG, "input current calibrated: 4mA=%ld, 20mA=%ld",
-                       (long)input_current.raw_4ma, (long)input_current.raw_20ma);
+            if (input_current.validFlag == INPUT_CALIB_VALID_FLAG &&
+                input_current.calibrated == 1 &&
+                input_current.raw_20ma > input_current.raw_4ma)
+            {
+                set_input_calibration(&input_current);
+                DEBUG_LOGI(TAG, "input current calibrated: 4mA=%ld, 20mA=%ld",
+                           (long)input_current.raw_4ma, (long)input_current.raw_20ma);
+            }
+            else
+            {
+                input_calibration_t def;
+                def.validFlag  = INPUT_CALIB_VALID_FLAG;
+                def.raw_4ma    = INPUT_CALIB_DEFAULT_4MA;
+                def.raw_20ma   = INPUT_CALIB_DEFAULT_20MA;
+                def.calibrated = 0;
+                set_input_calibration(&def);
+                DEBUG_LOGI(TAG, "input current not calibrated, use default");
+            }
         }
-        else
+    }
+
+    /* ========== 第三步：系统区 → 屏幕模块 ========== */
+    lcd_set_contrast_ratio(Read_System(SAVE_CONTRAST_RATIO));
+    /* 背光度：绑定 Timer/PWM 输出（需对应硬件 API，暂留接口） */
+    {
+        int bl = Read_System(SAVE_BACKLIGHT);
+        int bl_mode = Read_System(SAVE_BACKLIGHT_MODE);
+        DEBUG_LOGI(TAG, "backlight=%d mode=%d (no HW API yet)", bl, bl_mode);
+        /* TODO: 有 PWM 接口时加
+         * UserTime2SetPwm(bl);
+         */
+    }
+    /* 屏幕镜像 / 语言：GUIMain 在 DispKeyTask 里另读，此处只打日志确认 */
+    DEBUG_LOGI(TAG, "language=%d display_mirror=%d",
+               Read_System(SAVE_LANGUAGE), Read_System(SAVE_DISPLAY_MIRROR));
+
+    /* ========== 第四步：系统区 → 控制模块（ValveParam） ==========
+     * 合法性检查在这里做，ValveControl_Init 不再 Read_System */
+    {
+        valve_param_t *p = ValveParam_Get();
+
+        /* 死区：由 SAVE_REDUNDANT_ERROR 提供（整型 3~100 = 0.3%~10.0%，
+         * 数值与 deadband 单位 0.1% 一致，直接用）。SAVE_ERROR_RANGE 为遗留槽位不再分发 */
         {
-            /* 未校准：使用默认参数 */
-            input_calibration_t def;
-            def.validFlag  = INPUT_CALIB_VALID_FLAG;
-            def.raw_4ma    = INPUT_CALIB_DEFAULT_4MA;
-            def.raw_20ma   = INPUT_CALIB_DEFAULT_20MA;
-            def.calibrated = 0;
-            set_input_calibration(&def);
-            DEBUG_LOGI(TAG, "input current not calibrated, use default");
+            int re = Read_System(SAVE_REDUNDANT_ERROR);
+            if (re >= REDUNDANT_ERROR_MIN && re <= REDUNDANT_ERROR_MAX) {
+                p->deadband = re;
+            }
         }
+
+        /* 阀位零/满位：存储为角度×100 整数，除回为度；未标定时 amax <= amin + 5° 视为无效 */
+        {
+            float amin = (float)Read_System(SAVE_ANGLE_MIN) / ANGLE_SCALE;
+            float amax = (float)Read_System(SAVE_ANGLE_MAX) / ANGLE_SCALE;
+            if (amax > amin + 5.0f) {
+                p->angle_min = amin;
+                p->angle_max = amax;
+            }
+        }
+
+        /* PID 参数：存储为缩放整型（KP×10 / KI,KD×100），分发时除回去还原实际增益。
+         * 合法性在缩放后的整数域检查：Kp 1~500(0.1~50.0)、Ki 0~500(0~5.00)、Kd 0~500(0~5.00) */
+        {
+            int kp10  = Read_System(SAVE_CONTROL_KP);
+            int ki100 = Read_System(SAVE_CONTROL_KI);
+            int kd100 = Read_System(SAVE_CONTROL_KD);
+            if (kp10  > 0 && kp10  <= 500) p->kp = (float)kp10  / PID_KP_SCALE;
+            if (ki100 >= 0 && ki100 <= 500) p->ki = (float)ki100 / PID_KI_SCALE;
+            if (kd100 >= 0 && kd100 <= 500) p->kd = (float)kd100 / PID_KD_SCALE;
+        }
+        {
+            int kp10  = Read_System(SAVE_CONTROL_KP_DOWN);
+            int ki100 = Read_System(SAVE_CONTROL_KI_DOWN);
+            int kd100 = Read_System(SAVE_CONTROL_KD_DOWN);
+            if (kp10  > 0 && kp10  <= 500) p->kp_down = (float)kp10  / PID_KP_SCALE;
+            if (ki100 >= 0 && ki100 <= 500) p->ki_down = (float)ki100 / PID_KI_SCALE;
+            if (kd100 >= 0 && kd100 <= 500) p->kd_down = (float)kd100 / PID_KD_SCALE;
+        }
+
+        /* v3 档位参数：合法档位才覆盖，否则保留默认值（当前仅存档备用，
+         * 控制行为挂接点：actuator_type→行程映射、balance→PID增益组、friction→k3/k4） */
+        {
+            int act = Read_System(SAVE_ACTUATOR_TYPE);
+            int bal = Read_System(SAVE_BALANCE_LEVEL);
+            int fri = Read_System(SAVE_FRICTION_LEVEL);
+            if (act == ACTUATOR_TYPE_LT || act == ACTUATOR_TYPE_ROTS) p->actuator_type = (uint8_t)act;
+            if (bal >= BALANCE_MAX_SPEED && bal <= BALANCE_MAX_STABLE) p->balance_level = (uint8_t)bal;
+            if (fri == FRICTION_LOW || fri == FRICTION_HIGH)           p->friction_level = (uint8_t)fri;
+            /* 机械行程方向 → reverse_fb：angle_to_valve 里反馈阀位 0~1000 翻转，立即生效 */
+            int dir = Read_System(SAVE_MECHANICAL_DIRECTION);
+            if (dir == MECH_DIR_POSITIVE || dir == MECH_DIR_REVERSED) p->reverse_fb = (uint8_t)dir;
+            /* 机械行程限位：必须在 0~1000 且 min < max，否则保留默认全行程 */
+            int tmin = Read_System(SAVE_MECHANICAL_MIN);
+            int tmax = Read_System(SAVE_MECHANICAL_MAX);
+            if (tmin >= MECH_TRAVEL_MIN && tmax <= MECH_TRAVEL_MAX && tmin < tmax) {
+                p->travel_min = tmin;
+                p->travel_max = tmax;
+            }
+            /* 阀位反馈方向 → feedback_dir（对外反馈用，不影响闭环，闭环方向由 reverse_fb 管） */
+            int fbdir = Read_System(SAVE_FEEDBACK_DIRECTION);
+            if (fbdir == FB_DIR_POSITIVE || fbdir == FB_DIR_REVERSED) p->feedback_dir = (uint8_t)fbdir;
+        }
+
+        DEBUG_LOGI(TAG, "ValveParam loaded: Kp=%.2f Ki=%.3f Kd=%.3f deadband=%d angle=[%.1f, %.1f] act=%d bal=%d fri=%d",
+                   p->kp, p->ki, p->kd, p->deadband, p->angle_min, p->angle_max,
+                   p->actuator_type, p->balance_level, p->friction_level);
+    }
+
+    /* ========== 第四步续：系统区 → 定时任务周期（调度未实现，仅合法性检查 + 日志） ========== */
+    {
+        int32_t pst = Read_System(SAVE_PST_PERIOD);
+        if (pst < 0 || pst > PST_MONTH_MAX * PST_MINUTES_PER_MONTH + PST_HOUR_MAX * 60 + PST_MINUTE_MAX) {
+            pst = PST_PERIOD_DEFAULT;
+        }
+        DEBUG_LOGI(TAG, "pst period: %d month %d hour %d min",
+                   (int)(pst / PST_MINUTES_PER_MONTH),
+                   (int)((pst % PST_MINUTES_PER_MONTH) / 60),
+                   (int)(pst % 60));
+    }
+
+    /* ========== 第五步：系统区 → 控制模式（合法性校验 + 日志） ========== */
+    {
+        int mode = get_inpu_mode();
+        DEBUG_LOGI(TAG, "control mode: %d", mode);
+    }
+
+    /* 故障模式（SAVE_SAFE_POSITION）：分发在 OutputDriver_Init 内完成，
+     * 因 PF05 GPIO 在 OutputDriver_Init 才初始化，此处仅日志确认 */
+    {
+        int32_t sp = Read_System(SAVE_SAFE_POSITION);
+        DEBUG_LOGI(TAG, "safe position: %d (0=fail-safe 1=fail-lock)", (int)sp);
+    }
+
+    /* 行程时间极限（SAVE_EXECUTION_TIMEOUT）：消费者为自整定单步超时
+     * （ValveAutoAdjust step_begin 每步装载），此处仅合法性检查 + 日志 */
+    {
+        int32_t to = Read_System(SAVE_EXECUTION_TIMEOUT);
+        if (to < EXEC_TIMEOUT_MIN || to > EXEC_TIMEOUT_MAX) {
+            to = EXEC_TIMEOUT_DEFAULT;
+        }
+        DEBUG_LOGI(TAG, "execution timeout: %d s", (int)to);
     }
 }
 
-//读取参数上层应用  在这里保存应用参数
-void Read_SegA (void){
+/* 【遗留空函数】原 EEPROM 时代的分段读取接口，迁移到内部 Flash 后已无调用方，
+ * 后续清理时可直接删除 */
+void Read_SegA(void)
+{
 	
 	
 	
 	
 }
 
-/* ===================== 输入电流校准 ===================== */
+/* ===================== 输入电流校准 =====================
+ * ADX111 采集 4-20mA 输入电流信号，raw 值与 mA 的映射由两点标定确定：
+ *   标定前：用默认斜率（INPUT_CALIB_DEFAULT_4MA/20MA，实测反推）
+ *   标定后：用 Flash 校准区槽位4 存的两组 raw 值做两点线性插值
+ * 上电载入链：Save_System_Init 第二步 → Read_System_block → set_input_calibration
+ */
 
-static input_calibration_t g_inputCalib;  /* RAM 缓存 */
+static input_calibration_t g_inputCalib;  /* RAM 缓存：换算函数直接读它，无 Flash 依赖 */
 
+/** 只写 RAM 缓存（上电载入用，不落盘） */
 void set_input_calibration(const input_calibration_t *cal)
 {
     if (cal != NULL)
@@ -467,6 +698,7 @@ void set_input_calibration(const input_calibration_t *cal)
     }
 }
 
+/** 拷出当前 RAM 缓存（查询用） */
 void get_input_calibration(input_calibration_t *cal)
 {
     if (cal != NULL)
@@ -475,6 +707,8 @@ void get_input_calibration(input_calibration_t *cal)
     }
 }
 
+/** 标定完成落盘：组好结构体 → 更新 RAM 缓存 → 写入校准区槽位4（整区回写 Flash）。
+ *  由"电流标定"页面在保存确认后调用，raw 值来自页面去头去尾均值采集 */
 void save_input_calibration(int32_t raw_4ma, int32_t raw_20ma)
 {
     input_calibration_t cal;
@@ -498,7 +732,8 @@ void save_input_calibration(int32_t raw_4ma, int32_t raw_20ma)
                (long)raw_4ma, (long)raw_20ma);
 }
 
-/* raw AD 值 → 电流(mA)，使用两点线性校准 */
+/* raw AD 值 → 电流(mA)：两点线性插值，整数定点版（乘 100 保留 2 位小数再截断）。
+ * 未校准/分母为 0 时回落默认斜率。M0+ 无 FPU，热路径优先用这版省浮点开销 */
 int32_t input_current_raw_to_ma(int32_t raw)
 {
     int32_t r4 = g_inputCalib.raw_4ma;
@@ -520,7 +755,7 @@ int32_t input_current_raw_to_ma(int32_t raw)
     return (int32_t)(ma_x100 / 100);  /* 返回 mA 整数部分 */
 }
 
-/* 浮点版本，供需要小数的显示使用 */
+/* 浮点版本：控制环/需要小数精度的显示用（同样带未校准回落） */
 float input_current_raw_to_ma_float(int32_t raw)
 {
     int32_t r4 = g_inputCalib.raw_4ma;

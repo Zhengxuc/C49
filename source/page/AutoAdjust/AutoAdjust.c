@@ -3,6 +3,7 @@
 #include "System.h"
 #include "UserTim6.h"
 #include "Draw.h"
+#include "ValveAutoAdjust.h"
 
 /*页面唯一ID*/
 #define GUI_ID HMI_SCREEN_ID_GUI_AUTO_ADJUST
@@ -51,8 +52,9 @@ HMI_ENGINE_RESULT HMI_GUI_Prepare(SGUI_SCR_DEV *pstDeviceIF, const void *pstPara
     HMI_GUI_RefreshScreen(pstDeviceIF, pstParameters); /*绘制*/
     SysTickTimerEnable(true);                          /*启动定时器*/
 
-    /*切换APP*/
+    /*切换APP，并复位状态机（否则上次的完成标志会让本页立即自动返回）*/
     appManage_switchTask(APP_TASK_AUTO_ADJ);
+    ValveAutoAdjust_Reset();
 
     return HMI_RET_NORMAL;
 }
@@ -85,10 +87,6 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
         {
             iProcessAction = GUI_Key_Event(pstDeviceIF, KEY_CODE_VALUE(pstKeyEvent->Data.uiKeyValue));
         }
-        if (NULL != piActionID)
-        {
-            *piActionID = iProcessAction;
-        }
         break;
     case EVENT_ID_TIMER:
         pstDataEvent = (DATA_EVENT *)pstEvent;
@@ -98,11 +96,16 @@ HMI_ENGINE_RESULT HMI_GUI_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const HMI_EVEN
         }
         else
         {
-            eProcessResult = GUI_Time_Event(pstDeviceIF);
+            iProcessAction = (SGUI_INT)GUI_Time_Event(pstDeviceIF);
         }
         break;
     default:
         break;
+    }
+
+    if (NULL != piActionID)
+    {
+        *piActionID = iProcessAction;
     }
 
     return eProcessResult;
@@ -128,8 +131,11 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
     switch (uiKeyValue)
     {
     case KEY_VALUE_ENTER:
+        /* 开始零/满位自整定（状态机在 ControlTask 中运行） */
+        ValveAutoAdjust_Start();
         break;
     case KEY_VALUE_ESC:
+        ValveAutoAdjust_Cancel();
         appManage_switchTask(APP_TASK_AUTO_CONTROL);
         iProcessAction = HMI_DEMO_PROC_CANCEL;
         break;
@@ -138,6 +144,7 @@ static HMI_ENGINE_RESULT GUI_Key_Event(SGUI_SCR_DEV *pstDeviceIF, SGUI_UINT16 ui
     case KEY_VALUE_DOWN:
         break;
     case KEY_VALUE_F1:
+        ValveAutoAdjust_Cancel();
         appManage_switchTask(APP_TASK_AUTO_CONTROL);
         iProcessAction = HMI_DEMO_PROC_CANCEL;
         break;
@@ -154,41 +161,6 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
     const char *p;
 
     int32_t all_step = 0, step = 0;
-    /*动画*/
-    static int tim = 0;
-    tim++;
-    const uint8_t animTime = 2;
-    if (tim == 1 * animTime)
-    {
-        Draw_w8h16_string(0, 0, "-     ", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, "     -", 0);
-    }
-    else if (tim == 2 * animTime)
-    {
-        Draw_w8h16_string(0, 0, "--", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, "    --", 0);
-    }
-    else if (tim == 3 * animTime)
-    {
-        Draw_w8h16_string(0, 0, "---", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, "   ---", 0);
-    }
-    else if (tim == 4 * animTime)
-    {
-        Draw_w8h16_string(0, 0, "----", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, "  ----", 0);
-    }
-    else if (tim == 5 * animTime)
-    {
-        Draw_w8h16_string(0, 0, "-----", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, " -----", 0);
-    }
-    else if (tim == 6 * animTime)
-    {
-        tim = 0;
-        Draw_w8h16_string(0, 0, "------", 0);
-        Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 48, 0, "------", 0);
-    }
 
     /*标题*/
     p = Port_GetStr(DATA_S_AUTO_ADJ_TITLE);
@@ -257,6 +229,12 @@ static HMI_ENGINE_RESULT GUI_Time_Event(SGUI_SCR_DEV *pstDeviceIF)
         Draw_w8h16_string(pstDeviceIF->stSize.iWidth - 35, 16, strBuff, 0);
     }
     SGUI_INT iProcessAction = HMI_DEMO_PROC_NO_ACT;
+
+    /* 整定结束（完成/失败）：自动返回上一页，任务恢复由状态机完成 */
+    if (ValveAutoAdjust_IsDone())
+    {
+        iProcessAction = HMI_DEMO_PROC_CANCEL;
+    }
     return iProcessAction;
 }
 

@@ -23,4 +23,5 @@
   ../mcu/driver/inc/ddl.h ../mcu/common\interrupts_hc32l19x.h \
   ../source/common\ddl_device.h \
   D:\Software\KEIL526\ARM\ARMCLANG\Bin\..\include\stdbool.h \
-  ../mcu/driver/inc\flash.h ../source/driver/extra\Disp.h
+  ../mcu/driver/inc\flash.h ../source/driver/extra\Disp.h \
+  ../source/app/AutoControl\ValveParam.h

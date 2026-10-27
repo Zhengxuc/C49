@@ -41,9 +41,11 @@
   ../midware/FreeRTOS/FreeRTOS/Source/include/mpu_wrappers.h \
   ../midware/FreeRTOS/FreeRTOS/Source/include\task.h \
   ../midware/FreeRTOS/FreeRTOS/Source/include/list.h \
-  ../source/common\dataport.h ../source/driver/extra\KTH5702.h \
+  ../source/common\DataPort.h ../source/driver/extra\KTH5702.h \
   ../source/driver/extra\ADX111.h \
   ../source/app/AutoControl\ValveControl.h \
   ../source/app/AutoControl/ValveParam.h \
-  ../source/app/AutoControl\TestDrive.h ../source/app/System\Save.h \
+  ../source/app/AutoControl\Setpoint.h \
+  ../source/app/AutoAdjust\ValveAutoAdjust.h \
+  ../source/app/AutoAdjust\OutputDriver.h ../source/app/System\Save.h \
   ../mcu/driver/inc\flash.h

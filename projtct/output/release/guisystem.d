@@ -45,4 +45,4 @@
   ../source/page/common\Box.h ../source/page/common/SaveBox.h \
   ../source/page/common/Box.h ../source/page/common/SetValueBox.h \
   ../source/app/System\save.h ../mcu/driver/inc\flash.h \
-  ../source/driver/extra\Disp.h
+  ../source/driver/extra\Disp.h ../source/app/AutoAdjust\OutputDriver.h

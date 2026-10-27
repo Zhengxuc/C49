@@ -13,11 +13,6 @@
 #include "common.h"
 #include "GUIActions.h"
 
-#define KEY_FN_PIN GpioPortD, GpioPin2
-#define KEY_ENT_PIN GpioPortC, GpioPin12
-#define KEY_DOWN_PIN GpioPortC, GpioPin11
-#define KEY_UP_PIN GpioPortC, GpioPin10
-
 static int key_value = 0;
 
 ///< IO端口配置

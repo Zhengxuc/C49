@@ -42,6 +42,8 @@ enum HMI_ID
     HMI_SCREEN_ID_GUI_CURRENT_CALIB,
     HMI_SCREEN_ID_IP_PARAMETER,
     HMI_SCREEN_ID_TRAVEL_PARAMETER,
+    HMI_SCREEN_ID_FEEDBACK,        /* 7.阀门反馈参数页 */
+    HMI_SCREEN_ID_PST,             /* 6.PST 定时任务页 */
 
 };
 
@@ -64,5 +66,7 @@ extern HMI_SCREEN_OBJECT g_stGUIAutoAdjust;
 extern HMI_SCREEN_OBJECT g_stGUICurrentCalib;
 extern HMI_SCREEN_OBJECT g_stGUIIPParameter;
 extern HMI_SCREEN_OBJECT g_stGUITravelParameter;
+extern HMI_SCREEN_OBJECT g_stGUIFeedback;
+extern HMI_SCREEN_OBJECT g_stGUIPst;
 
 #endif

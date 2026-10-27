@@ -15,7 +15,9 @@
 #include "ddl.h"
 #include <stdbool.h>
 
-#define CONTROL_PERIOD 50 // ms
+#define CONTROL_PERIOD 20 // ms
+/* 控制周期（秒），PID 积分/微分含 Ts，改周期无需重调参数 */
+#define CONTROL_PERIOD_S (CONTROL_PERIOD / 1000.0f)
 
 #define scope(value, min, max) (value < min ? min : (value > max ? max : value))
 

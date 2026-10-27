@@ -47,4 +47,5 @@
   ../source/page/font\FontAscii_w8h16.h ../source/app/System\AppManage.h \
   ../source/app/AutoControl\ValveControl.h \
   ../source/app/AutoControl/ValveParam.h \
-  ../source/app/AutoControl\ValveOutput.h
+  ../source/app/AutoControl\Setpoint.h ../source/driver/extra\key.h \
+  ../mcu/driver/inc\gpio.h

@@ -136,9 +136,9 @@ HMI_ENGINE_RESULT HMI_GUIMenuAll_ProcessEvent(SGUI_SCR_DEV *pstDeviceIF, const H
                 else if (menu_list_select == 4)
                     HMI_SwitchScreen(HMI_SCREEN_ID_CONTROLPARAMETER, NULL);
                 else if (menu_list_select == 5)
-                    ;
+                    HMI_SwitchScreen(HMI_SCREEN_ID_PST, NULL);
                 else if (menu_list_select == 6)
-                    ;
+                    HMI_SwitchScreen(HMI_SCREEN_ID_FEEDBACK, NULL);
                 else if (menu_list_select == 7)
                     HMI_SwitchScreen(HMI_SCREEN_ID_SYSTEM, NULL);
                 else if (menu_list_select == 8)

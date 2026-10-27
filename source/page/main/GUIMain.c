@@ -35,6 +35,8 @@ HMI_SCREEN_OBJECT *g_arrpstScreenObjs[] = {
     &g_stGUICurrentCalib,
     &g_stGUITravelParameter,
     &g_stGUIIPParameter,
+    &g_stGUIFeedback,
+    &g_stGUIPst,
 };
 
 HMI_ENGINE_OBJECT g_stDemoEngine;
